@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-helper-plugin",
+      "name": "CPA Helper",
+      "description": "Applies API-key model and credential routing policy inside CLIProxyAPI, with a management UI and subset scheduling.",
+      "author": "xialss",
+      "version": "0.1.0",
+      "repository": "https://github.com/xialss/CPA-Helper-Plugin",
+      "logo": "https://raw.githubusercontent.com/xialss/CPA-Helper-Plugin/main/internal/plugin/web/logo.svg",
+      "homepage": "https://github.com/xialss/CPA-Helper-Plugin",
+      "license": "MIT",
+      "tags": [
+        "Management",
+        "Scheduler",
+        "API Key"
+      ]
+    }
+  ]
+}

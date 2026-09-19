@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPA Helper Plugin</title><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script defer src="lucide.js"></script><script defer src="sha256.js"></script><script defer src="app.js"></script></head>
+<body>
+<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span>PLUGIN / 0.1.0</span></div></div></header>
+<main>
+<div class="header-actions"><span id="connection" class="status">未连接</span><button id="refresh" class="icon" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button><a href="/management.html" target="_top">CPA 管理面板</a></div>
+<p id="message" role="status" aria-live="polite" hidden></p>
+<div id="workspace" hidden>
+<div class="heading"><div><h1>API Key 调度</h1><p id="revision">正在加载</p></div></div>
+<nav aria-label="视图"><button data-tab="keys" aria-selected="true">API Keys <span id="key-count">0</span></button><button data-tab="groups" aria-selected="false">路由规则 <span id="group-count">0</span></button><button data-tab="health" aria-selected="false">运行状态</button></nav>
+<section id="keys-view"><div class="toolbar"><label class="search"><i data-lucide="search"></i><input id="key-search" type="search" placeholder="搜索 Key 或备注" aria-label="搜索 Key"></label><button id="sync"><i data-lucide="refresh-cw"></i>同步 CPA 目录</button></div><div class="table-wrap"><table class="keys-table"><colgroup><col class="key-column"><col class="status-column"><col class="rules-column"><col class="concurrency-column"><col class="edit-column"></colgroup><thead><tr><th>API KEY</th><th>状态</th><th>路由规则</th><th>并发</th><th></th></tr></thead><tbody id="key-rows"></tbody></table></div><p class="empty" id="keys-empty">暂无 API Key</p></section>
+<section id="groups-view" hidden><div class="toolbar"><h2>路由规则</h2><button id="add-group"><i data-lucide="plus"></i>新建规则</button></div><div id="group-list"></div><p class="empty" id="groups-empty">暂无路由规则</p></section>
+<section id="health-view" hidden><dl id="health-details"></dl></section>
+</div>
+</main>
+<dialog id="editor"><form id="editor-form"><div class="dialog-title"><h2 id="editor-title"></h2><button type="button" id="close-editor" class="icon" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div><div class="dialog-body"><p id="edit-key-value" hidden></p><label><span id="edit-label-title">名称</span><input id="edit-label" required></label><label id="group-note-field" hidden>备注（可选）<textarea id="edit-note" rows="3"></textarea></label><div id="key-fields"><label class="check"><input id="edit-enabled" type="checkbox">启用</label><label>最大并发<input id="edit-limit" type="number" min="0" step="1" value="0"></label><fieldset><legend>绑定规则</legend><div id="bindings"></div></fieldset></div><fieldset><legend>模型</legend><div class="add-option"><input id="model-name" placeholder="搜索 CPA 模型" aria-label="搜索 CPA 模型"></div><div id="model-options" class="options"></div></fieldset><fieldset><legend>凭据类别</legend><div id="category-options" class="options"></div></fieldset><fieldset><legend>单个凭据</legend><div id="credential-options" class="options"></div></fieldset></div><div class="dialog-bottom"><p id="editor-error" role="alert"></p><div class="dialog-footer"><button type="button" id="delete-entry" class="danger"><i data-lucide="trash-2"></i>移除</button><button type="submit" class="primary"><i data-lucide="check"></i>保存</button></div></div></form></dialog>
+<dialog id="confirm"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-footer"><button value="cancel">取消</button><button value="ok" class="primary">确认</button></div></form></dialog>
+</body></html>

@@ -1,0 +1,24 @@
+# Go build output
+/bin/
+/dist/
+*.so
+*.dylib
+*.dll
+
+# Local development
+.env
+.env.*
+!.env.example
+/data/
+/tmp/
+/coverage/
+*.log
+/node_modules/
+/test-results/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
