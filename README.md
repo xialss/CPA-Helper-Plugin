@@ -25,7 +25,7 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 ## 构建与安装
 
-需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v7.2.143 或 v7.3.7。CPA v6 版本和 `no-plugin` 构建版本无法加载此插件。确切的版本锁定请参见 `docs/compatibility.md`。
+需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v7.3.8。当前开发版仅支持 v7.3.8。确切的版本锁定请参见 `docs/compatibility.md`。
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
@@ -57,7 +57,26 @@ plugins:
 
 当路由缩小了 CPA 的候选凭据集时，插件会在该子集内执行加权轮询（weighted round robin）选择。插件绝不会跨优先级层级检索：如果 CPA 仅提供了高优先级凭据，即使存在已授权的低优先级凭据，请求仍可能返回 503。未经过验证集成前，请勿同时启用其他具有竞争关系的调度器插件。
 
+模型列表过滤会将 Key／分组的模型允许和拒绝规则应用于 OpenAI、Claude、Gemini 和 Codex 列表；身份可辨识时，禁用的 Key 返回空列表。列表不判断上游凭据的路由可用性。使用单一请求头携带 Key（`Authorization`、`x-api-key` 或 `x-goog-api-key`）时按规则过滤。CPA v7.3.8 未向列表钩子提供已认证身份或 URL；缺少请求头身份（例如 URL 参数认证）或存在多个不同请求头 Key 时，保留 CPA 原始目录，并通过 `X-CPA-Helper-Model-List: unfiltered-identity-unavailable` 和日志标明原因。CPA 仍先执行认证；这只允许已通过 CPA 认证的请求放宽目录展示，不放宽实际生成权限。错误请求头 Key 与有效 URL Key 混用仍可能套用错误的展示规则。策略不可用或目录解析失败继续返回 JSON `error` 和 `X-CPA-Helper-Error`；受宿主接口限制，HTTP 状态仍为 200。模型列表不是权限安全边界。
+
 升级前请务必备份状态目录。若已有状态文件缺失或损坏，插件将返回 503 而非直接重置权限。策略回滚会发布一个新的版本（revision）；二进制文件或状态降级则需要在停止 CPA 时恢复对应的备份。
+
+## 模型列表过滤开关
+
+生成请求的插件错误提示使用中文：禁用 Key 返回 `401/api_key_disabled`，
+仅在请求头 Key 与 CPA 已认证身份匹配时显示前六后四的脱敏值；短 Key 全量遮盖，
+宿主未提供原始 Key 时只说明禁用原因。`403/model_forbidden` 会说明命中的
+Key 独立拒绝规则、分组名称及 ID，或未进入合并允许列表。并发超限返回
+`429/concurrency_limit`：“当前 API Key 已达设定并发上限”。
+模型列表仍受原开关及宿主状态码限制，CPA 自身和上游返回的错误不由插件翻译。
+
+在 CPA 官方插件管理中，打开 CPA Helper 的配置，将
+`model_list_filter_enabled` 设为 `false` 可关闭模型列表过滤，设为 `true`
+可重新启用；未设置时默认启用。保存后由 CPA 热更新，无需关闭整个插件。
+关闭只恢复 CPA 原始模型目录，实际生成的模型权限、凭据路由和并发限制继续生效。
+也可通过官方管理接口 `PATCH /v0/management/plugins/cpa-helper-plugin/config`
+提交 `{"model_list_filter_enabled":false}`；需要 CPA 管理密钥。
+插件 `/v1/capabilities` 返回当前开关状态、插件版本 0.1.2 和目标 CPA v7.3.8。
 
 ## 代码仓库指南
 

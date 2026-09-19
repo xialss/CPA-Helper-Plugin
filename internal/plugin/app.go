@@ -36,18 +36,19 @@ type HostCall func(method string, payload any) (json.RawMessage, error)
 
 // App is a single loaded plugin instance.
 type App struct {
-	mu          sync.RWMutex
-	store       *snapshot.Store
-	stateDir    string
-	runtime     *run.Runtime
-	host        HostCall
-	inventoryMu sync.Mutex
-	credentials map[string]credential
+	mu                     sync.RWMutex
+	modelListFilterEnabled bool
+	store                  *snapshot.Store
+	stateDir               string
+	runtime                *run.Runtime
+	host                   HostCall
+	inventoryMu            sync.Mutex
+	credentials            map[string]credential
 }
 
 // New constructs a plugin before CPA registration supplies configuration.
 func New(host HostCall) *App {
-	return &App{runtime: run.New(), host: host, credentials: map[string]credential{}}
+	return &App{modelListFilterEnabled: true, runtime: run.New(), host: host, credentials: map[string]credential{}}
 }
 
 type lifecycle struct {
@@ -55,10 +56,11 @@ type lifecycle struct {
 	SchemaVersion uint32 `json:"schema_version"`
 }
 type config struct {
-	StateDir string    `yaml:"state_dir"`
-	Enabled  bool      `yaml:"enabled"`
-	Priority int       `yaml:"priority"`
-	Store    yaml.Node `yaml:"store"`
+	ModelListFilterEnabled bool      `yaml:"model_list_filter_enabled"`
+	StateDir               string    `yaml:"state_dir"`
+	Enabled                bool      `yaml:"enabled"`
+	Priority               int       `yaml:"priority"`
+	Store                  yaml.Node `yaml:"store"`
 }
 type registration struct {
 	SchemaVersion uint32             `json:"schema_version"`
@@ -77,7 +79,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if req.SchemaVersion < 4 {
 			return nil, errors.New("CPA schema 4 or newer is required")
 		}
-		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true}
+		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true}
 		if len(bytes.TrimSpace(req.ConfigYAML)) > 0 {
 			decoder := yaml.NewDecoder(bytes.NewReader(req.ConfigYAML))
 			decoder.KnownFields(true)
@@ -101,9 +103,19 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			a.store = snapshot.Open(dir)
 			a.stateDir = dir
 		}
+		a.modelListFilterEnabled = cfg.ModelListFilterEnabled
 		a.runtime.Resume()
 		a.mu.Unlock()
-		return ok(registration{4, pluginapi.Metadata{Name: ID, Version: policy.Version, Author: "CPA-Helper", GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg", ConfigFields: []pluginapi.ConfigField{{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Dedicated persistent policy directory; parent must exist."}}}, map[string]bool{"request_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true}})
+		return ok(registration{4, pluginapi.Metadata{Name: ID, Version: policy.Version, Author: "CPA-Helper", GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg", ConfigFields: []pluginapi.ConfigField{{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Dedicated persistent policy directory; parent must exist."}, {Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"}}}, map[string]bool{"request_interceptor": true, "response_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true}})
+	case pluginabi.MethodResponseInterceptAfter:
+		if !a.modelListFiltering() {
+			return ok(pluginapi.ResponseInterceptResponse{})
+		}
+		var req pluginapi.ResponseInterceptRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return modelListError("invalid_model_catalog", "模型列表响应载荷格式无效")
+		}
+		return a.filterModelList(req)
 	case pluginabi.MethodRequestInterceptBefore:
 		var req pluginapi.RequestInterceptRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -142,7 +154,12 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 }
 
 // Shutdown prevents admission after the host begins unloading the instance.
-func (a *App) Shutdown()                       { a.runtime.Quiesce() }
+func (a *App) Shutdown() { a.runtime.Quiesce() }
+func (a *App) modelListFiltering() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.modelListFilterEnabled
+}
 func (a *App) currentStore() *snapshot.Store   { a.mu.RLock(); defer a.mu.RUnlock(); return a.store }
 func text(m map[string]any, key string) string { s, _ := m[key].(string); return strings.TrimSpace(s) }
 func internalRequest(m map[string]any) bool    { return text(m, "source") == "plugin_host_model_callback" }
@@ -166,27 +183,31 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 	}
 	scope := text(req.Metadata, "caller_scope")
 	if err := a.runtime.Begin(req.RequestID, scope); err != nil {
-		return denied(503, "request_identity_unavailable", "Request identity unavailable", req.SourceFormat)
+		return denied(503, "request_identity_unavailable", "请求身份不可用或请求已结束，请稍后重试", req.SourceFormat)
 	}
 	defer a.runtime.End(req.RequestID)
 	s := a.currentStore()
 	if s == nil {
-		return denied(503, "policy_unavailable", "Policy unavailable", req.SourceFormat)
+		return denied(503, "policy_unavailable", "当前策略不可用，请联系管理员", req.SourceFormat)
 	}
 	e, rev, err := s.Engine()
 	if err != nil {
-		return denied(503, "policy_unavailable", "Policy unavailable", req.SourceFormat)
+		return denied(503, "policy_unavailable", "当前策略不可用，请联系管理员", req.SourceFormat)
 	}
 	k := e.Resolve(scope)
 	model := requestedModel(req.Model, req.RequestedModel)
-	if !k.Enabled || !k.Rule.AllowsModel(model) {
+	if !k.Enabled {
+		a.audit(scope, rev, "api_key_disabled")
+		return denied(401, "api_key_disabled", disabledKeyMessage(scope, req.Headers), req.SourceFormat)
+	}
+	if reason := e.ModelDenial(scope, model); reason != "" {
 		a.audit(scope, rev, "denied_model")
-		return denied(403, "model_forbidden", "Model access denied", req.SourceFormat)
+		return denied(403, "model_forbidden", reason, req.SourceFormat)
 	}
 	if generate, ok := req.Metadata["generate"].(bool); !ok || generate {
 		if !a.runtime.Admit(req.RequestID, k.MaxConcurrency) {
 			a.audit(scope, rev, "concurrency_rejected")
-			return denied(429, "concurrency_limit", "API key concurrency limit reached", req.SourceFormat)
+			return denied(429, "concurrency_limit", "当前 API Key 已达设定并发上限", req.SourceFormat)
 		}
 	}
 	return ok(pluginapi.RequestInterceptResponse{})
@@ -199,20 +220,23 @@ func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
 	a.observe(req.Candidates)
 	scope := text(req.Options.Metadata, "caller_scope")
 	if !policy.ValidScope(scope) {
-		return ErrorEnvelope("request_identity_unavailable", "Request identity unavailable", 503)
+		return ErrorEnvelope("request_identity_unavailable", "请求身份不可用，请稍后重试", 503)
 	}
 	s := a.currentStore()
 	if s == nil {
-		return ErrorEnvelope("policy_unavailable", "Policy unavailable", 503)
+		return ErrorEnvelope("policy_unavailable", "当前策略不可用，请联系管理员", 503)
 	}
 	e, rev, err := s.Engine()
 	if err != nil {
-		return ErrorEnvelope("policy_unavailable", "Policy unavailable", 503)
+		return ErrorEnvelope("policy_unavailable", "当前策略不可用，请联系管理员", 503)
 	}
 	k := e.Resolve(scope)
 	model := requestedModel(req.Model, text(req.Options.Metadata, "requested_model"))
-	if !k.Enabled || !k.Rule.AllowsModel(model) {
-		return ErrorEnvelope("model_forbidden", "Model access denied", 403)
+	if !k.Enabled {
+		return ErrorEnvelope("api_key_disabled", disabledKeyMessage(scope, http.Header(req.Options.Headers)), 401)
+	}
+	if reason := e.ModelDenial(scope, model); reason != "" {
+		return ErrorEnvelope("model_forbidden", reason, 403)
 	}
 	allowed := make([]run.Candidate, 0, len(req.Candidates))
 	for _, c := range req.Candidates {
@@ -235,7 +259,7 @@ func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
 	id := a.runtime.Pick(rev, scope, strings.ToLower(model), allowed)
 	if id == "" {
 		a.audit(scope, rev, "no_routed_credential")
-		return ErrorEnvelope("no_routed_credential", "No available upstream credentials match the routing rules", 503)
+		return ErrorEnvelope("no_routed_credential", "当前路由规则下没有可用的上游凭据", 503)
 	}
 	a.audit(scope, rev, "credential_selected")
 	return ok(pluginapi.SchedulerPickResponse{AuthID: id, Handled: true})
@@ -247,6 +271,9 @@ func (a *App) audit(scope string, rev uint64, reason string) {
 
 func denied(status int, code, message, format string) ([]byte, error) {
 	typ := "server_error"
+	if status == 401 {
+		typ = "authentication_error"
+	}
 	if status == 403 {
 		typ = "permission_error"
 	}
@@ -271,7 +298,7 @@ func ok(v any) ([]byte, error) {
 	return json.Marshal(pluginabi.Envelope{OK: true, Result: raw})
 }
 
-// ErrorEnvelope preserves HTTP status across the v7.2.143 C ABI boundary.
+// ErrorEnvelope preserves HTTP status across the CPA v7.3.8 C ABI boundary.
 func ErrorEnvelope(code, message string, status int) ([]byte, error) {
 	return json.Marshal(pluginabi.Envelope{OK: false, Error: &pluginabi.Error{Code: code, Message: message, HTTPStatus: status}})
 }

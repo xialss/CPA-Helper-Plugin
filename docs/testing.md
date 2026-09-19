@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v7.2.143 binary for the target platform.
+Download the official plugin-enabled CPA v7.3.8 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v7.2.143\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v7.3.8\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -60,11 +60,25 @@ real credentials. It checks management authentication, static resources, aliases
 rollback. The test stops its CPA process and removes temporary state at completion.
 CPA itself can still perform its own background version checks.
 
+The v7.3.8 fixture also checks that `/v1/models` contains only the permitted
+alias for the restricted caller. Unit contract fixtures cover OpenAI, Claude
+cloaking/pagination IDs, Gemini, Codex, group denial precedence, disabled and
+unconfigured keys, missing/ambiguous headers, malformed catalogs and policy
+failure. Model-list errors are body replacements with HTTP 200, not RPC errors.
+The relaxed-list fixture verifies that query authentication and conflicting
+headers retain the full catalog, unauthenticated/invalid-key requests still return
+401, and generation with the restricted authenticated identity still returns 403.
+The toggle fixture patches the official plugin configuration false then true,
+waits for CPA's asynchronous reconfiguration through `/capabilities`, checks
+version metadata and the resulting catalog, and verifies generation stays denied.
+The fixture installs `CPA_PLUGIN_BINARY` under the canonical plugin filename,
+so a build artifact may have a trial suffix without changing its host plugin ID.
+
 ## Browser verification and preview
 
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v7.2.143\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v7.3.8\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```

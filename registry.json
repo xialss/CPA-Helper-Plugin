@@ -6,7 +6,7 @@
       "name": "CPA Helper",
       "description": "Applies API-key model and credential routing policy inside CLIProxyAPI, with a management UI and subset scheduling.",
       "author": "xialss",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "repository": "https://github.com/xialss/CPA-Helper-Plugin",
       "logo": "https://raw.githubusercontent.com/xialss/CPA-Helper-Plugin/main/internal/plugin/web/logo.svg",
       "homepage": "https://github.com/xialss/CPA-Helper-Plugin",

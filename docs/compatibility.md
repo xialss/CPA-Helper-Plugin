@@ -3,8 +3,66 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
+## Version 0.1.2 model-list filtering
+
+Client request errors now use Chinese messages. Disabled policy keys return
+401/api_key_disabled instead of 403/model_forbidden. Only header keys whose
+fingerprint matches the host caller_scope are displayed, masked to six leading
+and four trailing characters (keys of ten or fewer characters are fully masked).
+When the original key is unavailable, the message omits it. Model denial messages
+identify matching key/group deny rules or the merged allow-list sources.
+No policy format migration is required. Model-list status limitations remain.
+
+Version 0.1.2 reports CPA v7.3.8 and adds the host-managed boolean configuration
+`model_list_filter_enabled` (default true). Reconfiguration applies it immediately;
+false bypasses only model-list response processing. Policy v1 snapshots from
+0.1.0/0.1.1 remain accepted. Before binary downgrade remove the new config field;
+restore a matching policy backup if a newer producer version has been saved.
+
+The current development target is CPA v7.3.8 only, C ABI 1 / host schema 6,
+plugin schema 4. Older releases below are historical verification records.
+This release adds `response.intercept_after` using v7.3.8's
+`WriteModelListResponse`: empty Model/RequestedModel and request bodies,
+HTTP 200, original request headers, and nil Metadata. It filters OpenAI data/id,
+Claude data/id (including cloaked IDs), Gemini models/name and Codex models/slug.
+Only model allow/deny rules and key enablement apply to listing; credential
+availability and scheduler priority are still evaluated on execution.
+
+Use a single header credential (Authorization, X-Api-Key or X-Goog-Api-Key) for
+per-key filtering. The hook does not expose the URL or authenticated principal.
+Missing or distinct header credentials preserve the original catalog after CPA
+authentication, with an observable X-CPA-Helper-Model-List response header value
+`unfiltered-identity-unavailable` and a structured log. This is an intentional
+visibility relaxation for trusted users, not an authentication bypass. A wrong
+header credential combined with a valid query credential can still select the
+wrong display policy. Unavailable policy and malformed catalogs continue to return
+an explicit JSON error and X-CPA-Helper-Error; CPA still sends HTTP 200 because
+this hook cannot override status. Errors must be returned as successful RPC
+body replacements, since CPA ignores interceptor RPC failures.
+Header identity is an inference, not an authenticated-principal guarantee.
+The host can also skip failed/fused plugins; listing is not a security boundary.
+Generation admission remains authoritative. No snapshot migration is needed;
+restore the previous library to roll back this release.
+
+Verification on 2026-09-19: Linux amd64, Go 1.26.5 / Debian bookworm GCC 12.2,
+using the unmodified CPA v7.3.8 (`c93978c`) binary copied from the user's running
+Docker container in a separate test container. Vet, unit/management tests, race
+tests and the real CPA fixture passed. The fixture verifies filtering through
+Authorization, X-Api-Key and X-Goog-Api-Key; unconfigured callers keep the full
+catalog. The initial trial returned explicit errors for query-only and distinct
+header identities; the relaxed revision preserves the original catalog instead.
+Original execution, concurrency, cancellation, restart and rollback checks also
+passed without changing the running service's keys or policy snapshot.
+
+The relaxed revision subsequently passed the same Linux checks and real CPA
+fixture, including query-key/query-auth-token catalogs, conflicting headers,
+anonymous/invalid-key 401 and restricted-generation 403. It was deployed to the
+existing v7.3.8 Docker service after library/state backup. Configuration and
+policy hashes remained unchanged; the service loaded the replacement plugin.
+
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.2 | v7.3.8 (`c93978c`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Model-list filtering, host-managed toggle and Chinese policy errors; policy schema accepts 0.1.0–0.1.2 snapshots |
 | 0.1.0 | v7.2.143 (`4b5f1eab25fca4b3815369a826e958e7c070a69e`) | C ABI 1 / RPC schema 4 | verified on Linux and Windows amd64 | Go 1.26.0 minimum; CGO required |
 | 0.1.0 | v7.3.7 (`b773607e3e7756dc6020a291825e4eb08899595a`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Fixture passed with the binary copied from the running Docker container |
 | 0.1.1 | v7.3.7 (`b773607e3e7756dc6020a291825e4eb08899595a`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Store-installed configuration accepted; 0.1.0 policy snapshots remain compatible |

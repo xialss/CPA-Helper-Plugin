@@ -26,7 +26,7 @@ func configured(t *testing.T) *App {
 	if err := json.Unmarshal(env.Result, &registration); err != nil {
 		t.Fatal(err)
 	}
-	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || registration.SchemaVersion != 4 {
+	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || registration.SchemaVersion != 4 {
 		t.Fatal("invalid CPA registration")
 	}
 	return a

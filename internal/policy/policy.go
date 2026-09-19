@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.1"
+var Version = "0.1.2"
 
 func compatiblePluginVersion(version string) bool {
-	// v0.1.1 changed host configuration only; the v1 policy shape is unchanged.
-	return version == Version || version == "0.1.0"
+	// Model-list configuration does not change the v1 policy shape.
+	return version == Version || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.
@@ -64,12 +64,20 @@ type Snapshot struct {
 }
 
 // Engine is immutable once compiled and safe for concurrent reads.
-type Engine struct{ keys map[string]Key }
+type Engine struct {
+	keys         map[string]Key
+	modelSources map[string][]modelRuleSource
+}
+
+type modelRuleSource struct {
+	name string
+	rule Rule
+}
 
 // Initial explicitly permits CPA-authenticated keys without extra restrictions.
 func Initial() Snapshot { return Snapshot{"v1", Version, 1, time.Now().UTC(), []Group{}, []Key{}} }
 
-// CallerScope matches CPA v7.2.143's public caller identity contract.
+// CallerScope matches CPA v7.3.8's public caller identity contract.
 func CallerScope(key string) string {
 	sum := sha256.Sum256([]byte("cli-proxy-api:caller-scope:v1\x00" + strings.TrimSpace(key)))
 	return hex.EncodeToString(sum[:])
@@ -105,7 +113,7 @@ func Compile(s Snapshot) (*Engine, error) {
 		}
 		groups[g.ID] = merge(Rule{}, g.Rule)
 	}
-	e := &Engine{keys: make(map[string]Key, len(s.Keys))}
+	e := &Engine{keys: make(map[string]Key, len(s.Keys)), modelSources: make(map[string][]modelRuleSource, len(s.Keys))}
 	for _, k := range s.Keys {
 		if !ValidScope(k.ID) || k.MaxConcurrency < 0 || uint64(k.MaxConcurrency) > 9007199254740991 || k.GroupIDs == nil {
 			return nil, fmt.Errorf("invalid key configuration")
@@ -117,6 +125,7 @@ func Compile(s Snapshot) (*Engine, error) {
 			return nil, err
 		}
 		k.Rule = merge(Rule{}, k.Rule)
+		sources := []modelRuleSource{{name: "当前 API Key 的独立规则", rule: k.Rule}}
 		k.GroupIDs = slices.Clone(k.GroupIDs)
 		seen := map[string]bool{}
 		for _, id := range k.GroupIDs {
@@ -125,11 +134,40 @@ func Compile(s Snapshot) (*Engine, error) {
 				return nil, fmt.Errorf("missing or duplicate group binding")
 			}
 			seen[id] = true
+			name := id
+			for _, group := range s.Groups {
+				if group.ID == id {
+					name = group.Name
+					break
+				}
+			}
+			sources = append(sources, modelRuleSource{name: fmt.Sprintf("分组 %q（ID: %s）", name, id), rule: r})
 			k.Rule = merge(k.Rule, r)
 		}
 		e.keys[k.ID] = k
+		e.modelSources[k.ID] = sources
 	}
 	return e, nil
+}
+
+// ModelDenial explains the effective model decision without changing union semantics.
+func (e *Engine) ModelDenial(scope, model string) string {
+	if e.Resolve(scope).Rule.AllowsModel(model) {
+		return ""
+	}
+	var denied, allowed []string
+	for _, source := range e.modelSources[scope] {
+		if contains(source.rule.DeniedModels, model) {
+			denied = append(denied, source.name)
+		}
+		if len(source.rule.Models) > 0 {
+			allowed = append(allowed, source.name)
+		}
+	}
+	if len(denied) > 0 {
+		return fmt.Sprintf("模型 %q 被以下规则明确禁止：%s；拒绝规则优先于允许规则", model, strings.Join(denied, "、"))
+	}
+	return fmt.Sprintf("模型 %q 不在当前 API Key 与绑定分组合并后的模型允许列表中；允许列表来源：%s", model, strings.Join(allowed, "、"))
 }
 
 // Resolve returns an unrestricted key only when no explicit policy is bound.

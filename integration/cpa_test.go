@@ -78,7 +78,8 @@ func TestCPACompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(plugins, filepath.Base(library)), raw, 0600); err != nil {
+	// CPA derives the plugin ID from the filename, including for overridden builds.
+	if err = os.WriteFile(filepath.Join(plugins, plugin.ID+filepath.Ext(library)), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -254,8 +255,107 @@ openai-compatibility:
 		}
 	}
 	put(p)
+	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+	var catalog struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 1 || catalog.Data[0].ID != "route-model" {
+		t.Fatalf("filtered model catalog: %d %s", status, body)
+	}
+	for _, header := range []string{"X-Api-Key", "X-Goog-Api-Key"} {
+		status, body = call("GET", "/v1/models", "", nil, map[string]string{header: "fixture-downstream"})
+		if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 1 || catalog.Data[0].ID != "route-model" {
+			t.Fatalf("%s model catalog: %d %s", header, status, body)
+		}
+	}
+	status, body = call("GET", "/v1/models", "fixture-unconfigured", nil, nil)
+	if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 2 {
+		t.Fatalf("unconfigured model catalog: %d %s", status, body)
+	}
+	for _, tc := range []struct {
+		path, key string
+		headers   map[string]string
+	}{
+		{"/v1/models?key=fixture-downstream", "", nil},
+		{"/v1/models?auth_token=fixture-downstream", "", nil},
+		{"/v1/models", "fixture-downstream", map[string]string{"X-Api-Key": "fixture-unconfigured"}},
+	} {
+		status, body = call("GET", tc.path, tc.key, nil, tc.headers)
+		if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 2 || !bytes.Contains(body, []byte("blocked-model")) {
+			t.Fatalf("ambiguous model identity: %d %s", status, body)
+		}
+	}
+	for _, key := range []string{"", "invalid-fixture-key"} {
+		status, body = call("GET", "/v1/models", key, nil, nil)
+		if status != 401 || bytes.Contains(body, []byte("blocked-model")) {
+			t.Fatalf("unauthenticated catalog: %d %s", status, body)
+		}
+	}
+	for _, tc := range []struct {
+		path, key string
+		headers   map[string]string
+	}{
+		{"/v1/chat/completions?key=fixture-downstream", "", nil},
+		{"/v1/chat/completions", "fixture-downstream", map[string]string{"X-Api-Key": "fixture-unconfigured"}},
+	} {
+		status, body = call("POST", tc.path, tc.key, map[string]any{"model": "blocked-model", "messages": []map[string]string{{"role": "user", "content": "fixture"}}}, tc.headers)
+		if status != 403 || !bytes.Contains(body, []byte("model_forbidden")) {
+			t.Fatalf("listing fallback weakened admission: %d %s", status, body)
+		}
+	}
 	chat := func(model, key string) (int, []byte) {
 		return call("POST", "/v1/chat/completions", key, map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": "fixture"}}}, nil)
+	}
+	// Publish a disabled policy temporarily, then restore it at a new revision.
+	p.Revision++
+	p.Keys[0].Enabled = false
+	put(p)
+	status, body = chat("route-model", "fixture-downstream")
+	if status != 401 || !bytes.Contains(body, []byte("api_key_disabled")) || !bytes.Contains(body, []byte("fixtur...ream")) || !bytes.Contains(body, []byte("已被禁用")) || bytes.Contains(body, []byte("fixture-downstream")) {
+		t.Fatalf("disabled key response: %d %s", status, body)
+	}
+	p.Revision++
+	p.Keys[0].Enabled = true
+	put(p)
+	for _, enabled := range []bool{false, true} {
+		status, body = call("PATCH", "/v0/management/plugins/"+plugin.ID+"/config", "fixture-management", map[string]bool{"model_list_filter_enabled": enabled}, nil)
+		if status != 200 {
+			t.Fatalf("toggle config: %d %s", status, body)
+		}
+		// CPA persists configuration first; its file watcher applies it asynchronously.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			status, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
+			var caps struct {
+				Enabled bool   `json:"model_list_filter_enabled"`
+				Version string `json:"plugin_version"`
+				CPA     string `json:"cpa_version"`
+			}
+			if status != 200 || json.Unmarshal(body, &caps) != nil {
+				t.Fatalf("toggle capabilities: %d %s", status, body)
+			}
+			if caps.Enabled == enabled && caps.Version == "0.1.2" && caps.CPA == "v7.3.8" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("CPA did not apply toggle: %s", body)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+		want := 2
+		if enabled {
+			want = 1
+		}
+		if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != want {
+			t.Fatalf("toggle catalog: %d %s", status, body)
+		}
+		status, body = chat("blocked-model", "fixture-downstream")
+		if status != 403 {
+			t.Fatalf("toggle weakened admission: %d %s", status, body)
+		}
 	}
 	status, body = chat("blocked-model", "fixture-downstream")
 	if status != 403 {
@@ -304,7 +404,7 @@ openai-compatibility:
 	cancel()
 	_ = resp.Body.Close()
 	waitIdle(t, call)
-	p.Revision = 3
+	p.Revision++
 	p.Keys[0].Rule.CredentialIDs = []string{policy.CredentialRef("nonexistent")}
 	put(p)
 	status, body = chat("route-model", "fixture-downstream")
@@ -323,7 +423,7 @@ openai-compatibility:
 	if status != 503 {
 		t.Fatalf("restart lost policy: %d %s", status, body)
 	}
-	status, body = call("POST", plugin.BasePath+"/policy/rollback", "fixture-management", map[string]int{"policy_revision": 2}, map[string]string{"If-Match": "3", "Idempotency-Key": "rollback"})
+	status, body = call("POST", plugin.BasePath+"/policy/rollback", "fixture-management", map[string]uint64{"policy_revision": p.Revision - 1}, map[string]string{"If-Match": fmt.Sprint(p.Revision), "Idempotency-Key": "rollback"})
 	if status != 200 {
 		t.Fatalf("rollback: %d %s", status, body)
 	}
@@ -341,7 +441,7 @@ openai-compatibility:
 			t.Fatal("state leaked credential")
 		}
 	}
-	t.Log("Configured CPA binary: dynamic load, management auth/resources, alias policy, subset weights, streaming cancellation, concurrency, fail-closed routing, restart and rollback passed")
+	t.Log("Configured CPA binary: dynamic load, management auth/resources, model-list filtering and authenticated visibility fallback, alias policy, subset weights, streaming cancellation, concurrency, fail-closed routing, restart and rollback passed")
 }
 
 func waitIdle(t *testing.T, call func(string, string, string, any, map[string]string) (int, []byte)) {

@@ -10,6 +10,13 @@ management surface.
 
 ## Endpoints
 
+Model-list filtering is controlled through CPA's official plugin configuration:
+`PATCH /v0/management/plugins/cpa-helper-plugin/config` with
+`{"model_list_filter_enabled":false}` disables it; true enables it (the default
+when omitted). This host-managed setting persists across restarts and does not
+modify the policy snapshot or disable generation enforcement. `/capabilities`
+reports its current value, target CPA v7.3.8 and plugin version 0.1.2.
+
 The v1 prefix is `/v0/management/plugins/cpa-helper-plugin/v1`. CPA's management
 middleware authenticates every request using its management key. The plugin does
 not open an additional listener or accept downstream API keys for administration.
@@ -40,7 +47,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.1",
+  "plugin_version": "0.1.2",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -49,14 +56,18 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.1` accepts snapshots produced by `0.1.0`; the policy contract remains
-`v1`, and existing state does not require migration.
+Plugin `0.1.2` accepts snapshots produced by `0.1.0` and `0.1.1`; all three
+producer versions are enumerated in the schema. The policy contract remains `v1`,
+and existing state does not require migration. A 0.1.2 snapshot can be rewritten
+with an older producer version only when rolling the binary back to that version.
 The complete `PUT /policy` operation is the external administration interface for
 every control-panel setting. `groups[].id`, `groups[].name`, optional
 `groups[].note`, `groups[].rule`, `keys[].id`, `keys[].label`, `keys[].enabled`,
 `keys[].group_ids`, `keys[].max_concurrency`, and `keys[].rule` map directly to the
 visible editor fields. `GET /capabilities.policy_fields` exposes this mapping for
-CPA-Helper adapters. There is no hidden UI-only setting. A client should read the
+CPA-Helper adapters. The model-list filter toggle is host-managed plugin
+configuration and therefore intentionally remains outside the policy snapshot.
+A client should read the
 snapshot, modify the desired fields, preserve all others, then submit the complete
 snapshot with `If-Match` and `Idempotency-Key`.
 `groups` are reusable named route rules; each key binds zero or more `group_ids`
