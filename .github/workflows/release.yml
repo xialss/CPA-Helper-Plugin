@@ -88,6 +88,7 @@ jobs:
 
       - name: Set up UCRT64 compiler
         uses: msys2/setup-msys2@v2
+        id: msys2
         with:
           msystem: UCRT64
           update: true
@@ -105,7 +106,10 @@ jobs:
           $env:CGO_ENABLED = '1'
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
-          $env:CC = 'C:\msys64\ucrt64\bin\gcc.exe'
+          $env:CC = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin\gcc.exe'
+          if (-not (Test-Path -LiteralPath $env:CC)) {
+            throw "UCRT64 compiler was not found at $env:CC"
+          }
           New-Item -ItemType Directory -Force -Path release\windows | Out-Null
           go build -trimpath `
             -ldflags "-X cpa-helper-plugin/internal/policy.Version=$version" `
