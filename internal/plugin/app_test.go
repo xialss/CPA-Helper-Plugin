@@ -51,6 +51,30 @@ func TestPluginRegisterRejectsUnknownConfigurationField(t *testing.T) {
 	}
 }
 
+func TestPluginLifecycleAcceptsHostManagedStoreMetadata(t *testing.T) {
+	a := New(nil)
+	stateDir := filepath.ToSlash(filepath.Join(t.TempDir(), "state"))
+	raw, err := json.Marshal(lifecycle{
+		SchemaVersion: 4,
+		ConfigYAML: []byte("enabled: true\nstate_dir: " + stateDir + "\nstore:\n" +
+			"  id: cpa-helper-plugin\n" +
+			"  release-tag: v0.1.0\n" +
+			"  install:\n" +
+			"    type: github-release\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure} {
+		if env := invoke(t, a, method, json.RawMessage(raw)); !env.OK {
+			t.Fatal(method, env.Error)
+		}
+	}
+	if a.currentStore() == nil {
+		t.Fatal("policy store was not opened")
+	}
+}
+
 func invoke(t *testing.T, a *App, method string, req any) pluginabi.Envelope {
 	t.Helper()
 	raw, err := json.Marshal(req)

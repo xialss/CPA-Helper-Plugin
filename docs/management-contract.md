@@ -113,10 +113,12 @@ intentionally absent from the lightweight control-panel workflow.
 
 ## Storage and recovery
 
-`state_dir` defaults to `plugins/cpa-helper-state`; its parent must exist. Unknown
-plugin configuration fields are rejected before any policy state is opened. Only a
-newly created directory is bootstrapped with revision 1 and explicit unrestricted
-unknown-key behavior. An existing directory with missing/corrupt state is not reset.
+`state_dir` defaults to `plugins/cpa-helper-state`; its parent must exist. CPA's
+host-managed `store` installation metadata is accepted but ignored by the plugin.
+Other unknown plugin configuration fields are rejected before any policy state is
+opened. Only a newly created directory is bootstrapped with revision 1 and explicit
+unrestricted unknown-key behavior. An existing directory with missing/corrupt state
+is not reset.
 The single `state.json` transaction includes current policy, previous policy and
 idempotency receipts. Writes use a synchronized temporary file and replacement in
 the same directory. Keep the directory on a local filesystem with atomic rename.

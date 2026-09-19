@@ -55,9 +55,10 @@ type lifecycle struct {
 	SchemaVersion uint32 `json:"schema_version"`
 }
 type config struct {
-	StateDir string `yaml:"state_dir"`
-	Enabled  bool   `yaml:"enabled"`
-	Priority int    `yaml:"priority"`
+	StateDir string    `yaml:"state_dir"`
+	Enabled  bool      `yaml:"enabled"`
+	Priority int       `yaml:"priority"`
+	Store    yaml.Node `yaml:"store"`
 }
 type registration struct {
 	SchemaVersion uint32             `json:"schema_version"`

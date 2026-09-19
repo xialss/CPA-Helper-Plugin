@@ -107,6 +107,8 @@ plugins:
     cpa-helper-plugin:
       enabled: true
       state_dir: %q
+      store:
+        id: cpa-helper-plugin
 openai-compatibility:
   - name: fixture
     base-url: %q

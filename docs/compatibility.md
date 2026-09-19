@@ -56,6 +56,9 @@ No migration is required; backups remain the binary rollback procedure.
 - CPA v6 and no-plugin builds are unsupported; upgrade CPA before installation.
 - The v7.3.7 host accepts the plugin's schema 4 registration. New cross-priority
   scheduling is not enabled; the original highest-priority-tier contract remains.
+- Plugin-store installations add host-managed `store` metadata to the normalized
+  plugin configuration. The plugin accepts this node while continuing to reject
+  unknown plugin-owned configuration fields.
 - Real external provider requests, distributed deployments, Alpine/musl and
   other CPA revisions were not tested. No compatibility claim extends to them.
 
