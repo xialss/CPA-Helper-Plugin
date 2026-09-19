@@ -96,6 +96,7 @@ func TestValidation(t *testing.T) {
 		change func(*Snapshot)
 	}{
 		{"version", func(s *Snapshot) { s.ContractVersion = "v2" }},
+		{"plugin version", func(s *Snapshot) { s.PluginVersion = "9.9.9" }},
 		{"zero revision", func(s *Snapshot) { s.Revision = 0 }},
 		{"unsafe revision", func(s *Snapshot) { s.Revision = 9007199254740992 }},
 		{"missing collections", func(s *Snapshot) { s.Keys = nil }},
@@ -121,6 +122,14 @@ func TestValidation(t *testing.T) {
 				t.Fatal("accepted invalid policy")
 			}
 		})
+	}
+}
+
+func TestPreviousPluginVersionRemainsCompatible(t *testing.T) {
+	s := Initial()
+	s.PluginVersion = "0.1.0"
+	if _, err := Compile(s); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -7,6 +7,7 @@ must be updated before any ABI-facing change.
 | --- | --- | --- | --- | --- |
 | 0.1.0 | v7.2.143 (`4b5f1eab25fca4b3815369a826e958e7c070a69e`) | C ABI 1 / RPC schema 4 | verified on Linux and Windows amd64 | Go 1.26.0 minimum; CGO required |
 | 0.1.0 | v7.3.7 (`b773607e3e7756dc6020a291825e4eb08899595a`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Fixture passed with the binary copied from the running Docker container |
+| 0.1.1 | v7.3.7 (`b773607e3e7756dc6020a291825e4eb08899595a`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Store-installed configuration accepted; 0.1.0 policy snapshots remain compatible |
 
 The plugin imports only the public `sdk/pluginapi` and `sdk/pluginabi` packages.
 The reference behavior is cpa-plugin-key-billing commit

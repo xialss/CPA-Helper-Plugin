@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -49,6 +50,26 @@ func TestTransactionsRestartAndRollback(t *testing.T) {
 	}
 	if rev, err := reopened.Apply(p, 1, "first"); err != nil || rev != 2 {
 		t.Fatal("durable receipt lost", rev, err)
+	}
+}
+
+func TestOpenAcceptsPreviousPluginVersion(t *testing.T) {
+	s := newStore(t)
+	s.state.Current.PluginVersion = "0.1.0"
+	raw, err := json.Marshal(s.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(s.dir, "state.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reopened := Open(s.dir)
+	if reopened.Health().Status != "ok" || reopened.Health().PluginVersion != policy.Version {
+		t.Fatal(reopened.Health())
+	}
+	current, err := reopened.Current()
+	if err != nil || current.PluginVersion != "0.1.0" {
+		t.Fatal(current.PluginVersion, err)
 	}
 }
 

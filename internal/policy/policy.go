@@ -12,7 +12,12 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.0"
+var Version = "0.1.1"
+
+func compatiblePluginVersion(version string) bool {
+	// v0.1.1 changed host configuration only; the v1 policy shape is unchanged.
+	return version == Version || version == "0.1.0"
+}
 
 // Selector identifies a credential category without exposing credentials.
 type Selector struct {
@@ -84,7 +89,7 @@ func ValidScope(id string) bool {
 
 // Compile validates and pre-merges all key rules in a snapshot.
 func Compile(s Snapshot) (*Engine, error) {
-	if s.ContractVersion != "v1" || s.PluginVersion != Version || s.Revision == 0 || s.Revision > 9007199254740991 || s.GeneratedAt.IsZero() || s.Keys == nil || s.Groups == nil {
+	if s.ContractVersion != "v1" || !compatiblePluginVersion(s.PluginVersion) || s.Revision == 0 || s.Revision > 9007199254740991 || s.GeneratedAt.IsZero() || s.Keys == nil || s.Groups == nil {
 		return nil, fmt.Errorf("invalid snapshot envelope")
 	}
 	groups := make(map[string]Rule, len(s.Groups))

@@ -40,7 +40,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.0",
+  "plugin_version": "0.1.1",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -49,6 +49,8 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
+Plugin `0.1.1` accepts snapshots produced by `0.1.0`; the policy contract remains
+`v1`, and existing state does not require migration.
 The complete `PUT /policy` operation is the external administration interface for
 every control-panel setting. `groups[].id`, `groups[].name`, optional
 `groups[].note`, `groups[].rule`, `keys[].id`, `keys[].label`, `keys[].enabled`,
