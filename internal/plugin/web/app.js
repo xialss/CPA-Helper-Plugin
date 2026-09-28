@@ -4,7 +4,7 @@
   const base = "/v0/management/plugins/cpa-helper-plugin/v1";
   const $ = id => document.getElementById(id);
   let token = "", snapshot = null, health = null, dirty = false, busy = false, editing = null, session = 0;
-  let keys = [], credentials = [], models = [];
+  let keys = [], credentials = [], models = [], verification = null, verificationDirty = false;
   const clone = value => structuredClone(value);
   const icons = () => lucide.createIcons();
   const unique = values => [...new Set(values)].sort();
@@ -47,6 +47,7 @@
   function updateButtons() {
     for (const id of ["refresh", "sync", "add-group"]) $(id).disabled = busy || !snapshot;
     for (const control of $("editor-form").querySelectorAll("input, select, button")) control.disabled = busy;
+    for (const control of $("verification-form").querySelectorAll("input, select, textarea, button")) control.disabled = busy || !verification;
   }
   async function persist(next) {
     const expectedRevision = snapshot.policy_revision + 1;
@@ -63,12 +64,68 @@
     const result = items.slice(); result[index] = value; return result;
   }
   async function load() {
-    const [p, h] = await Promise.all([api(base + "/policy"), api(base + "/health")]);
+    const [p, h, caps] = await Promise.all([api(base + "/policy"), api(base + "/health"), api(base + "/capabilities")]);
+    verification = caps.response_model_mismatch; renderVerification();
     snapshot = p; health = h; dirty = false;
     $("workspace").hidden = false;
     $("connection").textContent = "已连接"; $("connection").classList.add("ready"); render();
   }
   function parseList(config, name) { const value = config[name] ?? []; if (!Array.isArray(value)) throw new Error(`CPA 目录格式错误: ${name}`); return value; }
+  function renderVerification() {
+    if (!verification) throw new Error("当前插件未提供响应核验配置");
+    $("verify-enabled").checked = verification.enabled;
+    $("verify-stream").checked = verification.stream_enabled;
+    $("verify-responses-only").checked = verification.responses_only_stream !== false;
+    $("verify-buffer").value = verification.max_buffer_bytes || 16777216;
+    $("verify-total-buffer").value = verification.max_total_buffer_bytes || 67108864;
+    $("verify-action").value = verification.action;
+    $("verify-unknown").value = verification.unknown_action;
+    $("verify-case").checked = verification.case_sensitive;
+    $("verify-thinking").checked = verification.ignore_thinking_suffix;
+    $("verify-ignored").value = (verification.ignored_models || []).join("\n");
+    $("verify-accepted").value = Object.entries(verification.accepted_models || {}).map(([from, to]) => from + " = " + to.join(", ")).join("\n");
+    verificationDirty = false;
+    $("verification-status").textContent = "";
+  }
+  function readVerification() {
+    const accepted = Object.create(null);
+    for (const line of $("verify-accepted").value.split("\n").map(x => x.trim()).filter(Boolean)) {
+      const i = line.indexOf("=");
+      if (i < 1) throw new Error("映射格式应为：请求模型 = 响应模型1, 响应模型2");
+      const name = line.slice(0, i).trim(), values = line.slice(i + 1).split(",").map(x => x.trim());
+      if (Object.hasOwn(accepted, name) || values.some(x => !x)) throw new Error("映射含重复请求模型或空响应模型");
+      accepted[name] = values;
+    }
+    return { enabled: $("verify-enabled").checked, stream_enabled: $("verify-stream").checked, responses_only_stream: $("verify-responses-only").checked,
+      max_buffer_bytes: Number($("verify-buffer").value), max_total_buffer_bytes: Number($("verify-total-buffer").value), action: $("verify-action").value,
+      unknown_action: $("verify-unknown").value, case_sensitive: $("verify-case").checked, ignore_thinking_suffix: $("verify-thinking").checked,
+      ignored_models: $("verify-ignored").value.split("\n").map(x => x.trim()).filter(Boolean), accepted_models: accepted };
+  }
+  function sameSettings(a, b) {
+    const canonical = value => JSON.stringify({ ...value, ignored_models: value.ignored_models || [], accepted_models: Object.fromEntries(Object.entries(value.accepted_models || {}).sort(([a], [b]) => a.localeCompare(b))) });
+    return canonical(a) === canonical(b);
+  }
+  $("verification-form").oninput = () => { verificationDirty = true; $("verification-status").textContent = "有未保存的修改"; };
+  $("verification-form").onsubmit = event => {
+    event.preventDefault();
+    void action(async () => {
+      $("verification-status").textContent = "正在校验并保存…";
+      try {
+        const next = await api(base + "/response-model/validate", { method: "POST", body: readVerification() });
+        await api("/v0/management/plugins/cpa-helper-plugin/config", { method: "PATCH", body: { response_model_mismatch: next } });
+        const deadline = Date.now() + 10000;
+        for (;;) {
+          const caps = await api(base + "/capabilities");
+          if (sameSettings(caps.response_model_mismatch, next)) { verification = caps.response_model_mismatch; renderVerification(); $("verification-status").textContent = "已保存并生效"; notice("响应核验配置已生效"); return; }
+          if (Date.now() >= deadline) throw new Error("CPA 已保存配置，但尚未确认插件生效，请刷新检查");
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+      } catch (error) {
+        $("verification-status").textContent = "未确认生效：" + error.message;
+        throw error;
+      }
+    });
+  };
   function configuredCredentials(config) {
     const out = [], counters = new Map();
     const fingerprint = (kind, parts) => {
@@ -222,12 +279,15 @@
   }
   $("close-editor").onclick = closeEditor;
   $("editor").oncancel = event => { event.preventDefault(); void closeEditor(); };
-  $("refresh").onclick = () => action(async () => { await load(); notice("已刷新"); });
+  $("refresh").onclick = () => action(async () => {
+    if (verificationDirty && !await confirmAction("放弃核验配置修改", "尚未保存的核验配置将被丢弃。")) return;
+    await load(); notice("已刷新");
+  });
   $("sync").onclick = () => action(syncDirectory);
   $("add-group").onclick = () => openEditor("group", { id: newID(), name: "", rule: {} });
   $("key-search").oninput = render;
   for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => { for (const tab of document.querySelectorAll("[data-tab]")) { const selected = tab === b; tab.setAttribute("aria-selected", String(selected)); $(tab.dataset.tab + "-view").hidden = !selected; } };
-  window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
+  window.addEventListener("beforeunload", event => { if (dirty || verificationDirty) { event.preventDefault(); event.returnValue = ""; } });
   icons(); updateButtons();
   action(async () => { token = panelKey(); await load(); await syncDirectory(); });
 })();

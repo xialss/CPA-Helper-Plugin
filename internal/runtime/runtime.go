@@ -112,6 +112,14 @@ func (r *Runtime) Complete(id string) {
 	}
 }
 
+// IsLive reports whether an intercept or admitted request has not completed.
+func (r *Runtime) IsLive(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.requests[id]
+	return a != nil && !a.complete
+}
+
 // Counts returns a detached snapshot of current concurrency.
 func (r *Runtime) Counts() map[string]int {
 	r.mu.Lock()

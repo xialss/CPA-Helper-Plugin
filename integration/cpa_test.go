@@ -41,6 +41,8 @@ func TestCPACompatibility(t *testing.T) {
 	}
 	var mu sync.Mutex
 	seen := map[string]int{}
+	responseModel := "upstream-model"
+	finiteStream := false
 	streamStarted := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -53,11 +55,16 @@ func TestCPACompatibility(t *testing.T) {
 		}
 		mu.Lock()
 		seen[r.Header.Get("Authorization")]++
+		actual, finite := responseModel, finiteStream
 		mu.Unlock()
 		if body.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprint(w, "data: {\"id\":\"fixture\",\"object\":\"chat.completion.chunk\",\"model\":\"upstream-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n")
+			fmt.Fprintf(w, "data: {\"id\":\"fixture\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n", actual)
 			w.(http.Flusher).Flush()
+			if finite {
+				fmt.Fprint(w, "data: {\"model\":\"route-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"later-secret\"}}]}\n\ndata: [DONE]\n\n")
+				return
+			}
 			select {
 			case streamStarted <- struct{}{}:
 			default:
@@ -66,7 +73,7 @@ func TestCPACompatibility(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"fixture","object":"chat.completion","model":"upstream-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		fmt.Fprintf(w, `{"id":"fixture","object":"chat.completion","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, actual)
 	}))
 	defer upstream.Close()
 	dir := t.TempDir()
@@ -101,6 +108,7 @@ remote-management:
   disable-auto-update-panel: true
 request-retry: 0
 max-retry-interval: 0
+logging-to-file: true
 plugins:
   enabled: true
   dir: %q
@@ -336,7 +344,7 @@ openai-compatibility:
 			if status != 200 || json.Unmarshal(body, &caps) != nil {
 				t.Fatalf("toggle capabilities: %d %s", status, body)
 			}
-			if caps.Enabled == enabled && caps.Version == "0.1.2" && caps.CPA == "v7.3.8" {
+			if caps.Enabled == enabled && caps.Version == policy.Version && caps.CPA == plugin.CPAVersion {
 				break
 			}
 			if time.Now().After(deadline) {
@@ -404,6 +412,128 @@ openai-compatibility:
 	cancel()
 	_ = resp.Body.Close()
 	waitIdle(t, call)
+	// Response verification is post-execution, independent of route-model aliases.
+	applyVerification := func(cfg policy.ResponseModelConfig) {
+		t.Helper()
+		status, body := call("PATCH", "/v0/management/plugins/"+plugin.ID+"/config", "fixture-management", map[string]any{"response_model_mismatch": cfg}, nil)
+		if status != 200 {
+			t.Fatalf("verification config: %d %s", status, body)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			_, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
+			var caps struct {
+				Config policy.ResponseModelConfig `json:"response_model_mismatch"`
+			}
+			if err := json.Unmarshal(body, &caps); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := json.Marshal(caps.Config)
+			want, _ := json.Marshal(cfg)
+			if bytes.Equal(got, want) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("verification reconfigure timeout: %s", body)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	verify := policy.DefaultResponseModelConfig()
+	verify.Enabled = true
+	// Exercise legacy protocol adapters explicitly; strict mode is covered below.
+	verify.ResponsesOnlyStream = false
+	applyVerification(verify)
+	mu.Lock()
+	responseModel = "watered-model"
+	finiteStream = true
+	mu.Unlock()
+	for _, stream := range []bool{false, true} {
+		status, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": stream, "messages": []map[string]string{{"role": "user", "content": "verify"}}}, nil)
+		if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) || bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte("later-secret")) {
+			t.Fatalf("mismatch stream=%v: %d %s", stream, status, body)
+		}
+		waitIdle(t, call)
+	}
+	verify.ResponsesOnlyStream = true
+	applyVerification(verify)
+	mu.Lock()
+	beforeStrictCalls := seen["Bearer upstream-a"] + seen["Bearer upstream-b"] + seen["Bearer upstream-forbidden"]
+	mu.Unlock()
+	status, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "messages": []map[string]string{{"role": "user", "content": "strict stream"}}}, nil)
+	if status != 400 || !bytes.Contains(body, []byte("response_model_stream_unsupported")) {
+		t.Fatalf("strict non-Responses stream was not rejected: %d %s", status, body)
+	}
+	waitIdle(t, call)
+	mu.Lock()
+	afterStrictCalls := seen["Bearer upstream-a"] + seen["Bearer upstream-b"] + seen["Bearer upstream-forbidden"]
+	mu.Unlock()
+	if afterStrictCalls != beforeStrictCalls {
+		t.Fatalf("strict non-Responses request reached upstream: before=%d after=%d", beforeStrictCalls, afterStrictCalls)
+	}
+	verify.ResponsesOnlyStream = false
+	applyVerification(verify)
+	// Cross-protocol conversion rewrites model metadata; raw observation must win.
+	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "verify responses"}, nil)
+	if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) {
+		t.Fatalf("translated mismatch: %d %s", status, body)
+	}
+	waitIdle(t, call)
+	for _, tc := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/v1/responses", map[string]any{"model": "route-model", "stream": true, "input": "verify stream responses"}},
+		{"/v1/messages", map[string]any{"model": "route-model", "max_tokens": 10, "stream": true, "messages": []map[string]string{{"role": "user", "content": "verify claude"}}}},
+		{"/v1beta/models/route-model:streamGenerateContent?alt=sse", map[string]any{"contents": []map[string]any{{"parts": []map[string]string{{"text": "verify gemini"}}}}}},
+	} {
+		status, body = call("POST", tc.path, "fixture-downstream", tc.body, nil)
+		if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) || bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte("later-secret")) {
+			t.Fatalf("converted stream %s: %d %s", tc.path, status, body)
+		}
+		waitIdle(t, call)
+	}
+	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "input": "verify codex terminal error"}, map[string]string{"Originator": "codex_cli_rs"})
+	if status != 200 || !bytes.Contains(body, []byte("event: response.failed")) || !bytes.Contains(body, []byte(`"code":"invalid_prompt"`)) || !bytes.Contains(body, []byte(`"verification_code":"upstream_model_mismatch"`)) || !bytes.Contains(body, []byte(`"status":403`)) || bytes.Contains(body, []byte("later-secret")) {
+		t.Fatalf("Codex terminal rejection: %d %s", status, body)
+	}
+	waitIdle(t, call)
+	verify.Accepted = map[string][]string{"route-model": {"watered-model"}}
+	applyVerification(verify)
+	status, body = chat("route-model", "fixture-downstream")
+	if status != 200 || bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("watered-model")) {
+		t.Fatalf("accepted mapping: %d %s", status, body)
+	}
+	waitIdle(t, call)
+	verify.Accepted = map[string][]string{}
+	verify.UnknownAction = "reject"
+	applyVerification(verify)
+	mu.Lock()
+	responseModel = ""
+	mu.Unlock()
+	status, body = chat("route-model", "fixture-downstream")
+	if !bytes.Contains(body, []byte("response_model_unverifiable")) || bytes.Contains(body, []byte("upstream_model_mismatch")) {
+		t.Fatalf("unknown model misclassified: %s", body)
+	}
+	waitIdle(t, call)
+	applyVerification(policy.DefaultResponseModelConfig())
+	status, body = call("GET", "/v0/management/logs?limit=1000", "fixture-management", nil, nil)
+	var verificationLogs struct {
+		Lines []string `json:"lines"`
+	}
+	if status != 200 || json.Unmarshal(body, &verificationLogs) != nil {
+		t.Fatalf("CPA log management contract: %d %s", status, body)
+	}
+	joinedLogs := strings.Join(verificationLogs.Lines, "\n")
+	for _, want := range []string{"[响应核验] 配置已生效", "result=blocked", "result=matched", `requested_model="route-model"`, `actual_model="watered-model"`, "plugin_id=cpa-helper-plugin"} {
+		if !strings.Contains(joinedLogs, want) {
+			t.Fatalf("CPA log viewer missing %q: %s", want, joinedLogs)
+		}
+	}
+	mu.Lock()
+	responseModel = "upstream-model"
+	finiteStream = false
+	mu.Unlock()
 	p.Revision++
 	p.Keys[0].Rule.CredentialIDs = []string{policy.CredentialRef("nonexistent")}
 	put(p)
@@ -441,7 +571,7 @@ openai-compatibility:
 			t.Fatal("state leaked credential")
 		}
 	}
-	t.Log("Configured CPA binary: dynamic load, management auth/resources, model-list filtering and authenticated visibility fallback, alias policy, subset weights, streaming cancellation, concurrency, fail-closed routing, restart and rollback passed")
+	t.Log("Configured CPA binary: dynamic load, management auth/resources, model-list filtering and authenticated visibility fallback, raw response model verification (Chat/Responses/Claude/Gemini), mappings and unknown rejection, alias policy, subset weights, streaming cancellation, concurrency, lifecycle cleanup, fail-closed routing, restart and rollback passed")
 }
 
 func waitIdle(t *testing.T, call func(string, string, string, any, map[string]string) (int, []byte)) {
@@ -450,12 +580,13 @@ func waitIdle(t *testing.T, call func(string, string, string, any, map[string]st
 	for time.Now().Before(deadline) {
 		status, body := call("GET", plugin.BasePath+"/health", "fixture-management", nil, nil)
 		var h struct {
-			Active map[string]int `json:"active"`
+			Active           map[string]int `json:"active"`
+			ResponseTracking int            `json:"response_model_tracked_requests"`
 		}
-		if status == 200 && json.Unmarshal(body, &h) == nil && len(h.Active) == 0 {
+		if status == 200 && json.Unmarshal(body, &h) == nil && len(h.Active) == 0 && h.ResponseTracking == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("completion did not release concurrency")
+	t.Fatal("completion did not release concurrency or response verification state")
 }

@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.2"
+var Version = "0.1.4"
 
 func compatiblePluginVersion(version string) bool {
-	// Model-list configuration does not change the v1 policy shape.
-	return version == Version || version == "0.1.1" || version == "0.1.0"
+	// Host-managed feature settings do not change the v1 policy shape.
+	return version == Version || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.
@@ -77,7 +77,7 @@ type modelRuleSource struct {
 // Initial explicitly permits CPA-authenticated keys without extra restrictions.
 func Initial() Snapshot { return Snapshot{"v1", Version, 1, time.Now().UTC(), []Group{}, []Key{}} }
 
-// CallerScope matches CPA v7.3.8's public caller identity contract.
+// CallerScope matches CPA v8.0.3's public caller identity contract.
 func CallerScope(key string) string {
 	sum := sha256.Sum256([]byte("cli-proxy-api:caller-scope:v1\x00" + strings.TrimSpace(key)))
 	return hex.EncodeToString(sum[:])

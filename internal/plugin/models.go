@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"cpa-helper-plugin/internal/policy"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
-// listScope infers identity from the headers available in CPA v7.3.8.
+// listScope infers identity from the headers available in CPA v8.0.3.
 // The host does not supply query credentials or the authenticated principal.
 func listScope(headers http.Header) string {
 	scope := ""
@@ -48,7 +48,7 @@ func modelListError(code, message string) ([]byte, error) {
 }
 
 func (a *App) filterModelList(req pluginapi.ResponseInterceptRequest) ([]byte, error) {
-	// This is the captured v7.3.8 list-response shape, not a generation response.
+	// This is the captured v8.0.3 list-response shape, not a generation response.
 	if req.Model != "" || req.RequestedModel != "" || req.Stream || len(req.OriginalRequest) != 0 || len(req.RequestBody) != 0 || req.StatusCode != http.StatusOK || internalRequest(req.Metadata) {
 		return ok(pluginapi.ResponseInterceptResponse{})
 	}

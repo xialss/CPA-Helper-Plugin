@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"cpa-helper-plugin/internal/policy"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 func TestDisabledKeyMessage(t *testing.T) {

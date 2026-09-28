@@ -2,16 +2,37 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPA Helper Plugin</title><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script defer src="lucide.js"></script><script defer src="sha256.js"></script><script defer src="app.js"></script></head>
 <body>
-<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span>PLUGIN / 0.1.2</span></div></div></header>
+<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span>PLUGIN / 0.1.4</span></div></div></header>
 <main>
 <div class="header-actions"><span id="connection" class="status">未连接</span><button id="refresh" class="icon" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button><a href="/management.html" target="_top">CPA 管理面板</a></div>
 <p id="message" role="status" aria-live="polite" hidden></p>
 <div id="workspace" hidden>
 <div class="heading"><div><h1>API Key 调度</h1><p id="revision">正在加载</p></div></div>
-<nav aria-label="视图"><button data-tab="keys" aria-selected="true">API Keys <span id="key-count">0</span></button><button data-tab="groups" aria-selected="false">路由规则 <span id="group-count">0</span></button><button data-tab="health" aria-selected="false">运行状态</button></nav>
+<nav aria-label="视图"><button data-tab="keys" aria-selected="true">API Keys <span id="key-count">0</span></button><button data-tab="groups" aria-selected="false">路由规则 <span id="group-count">0</span></button><button data-tab="verification" aria-selected="false">响应核验</button><button data-tab="health" aria-selected="false">运行状态</button></nav>
 <section id="keys-view"><div class="toolbar"><label class="search"><i data-lucide="search"></i><input id="key-search" type="search" placeholder="搜索 Key 或备注" aria-label="搜索 Key"></label><button id="sync"><i data-lucide="refresh-cw"></i>同步 CPA 目录</button></div><div class="table-wrap"><table class="keys-table"><colgroup><col class="key-column"><col class="status-column"><col class="rules-column"><col class="concurrency-column"><col class="edit-column"></colgroup><thead><tr><th>API KEY</th><th>状态</th><th>路由规则</th><th>并发</th><th></th></tr></thead><tbody id="key-rows"></tbody></table></div><p class="empty" id="keys-empty">暂无 API Key</p></section>
 <section id="groups-view" hidden><div class="toolbar"><h2>路由规则</h2><button id="add-group"><i data-lucide="plus"></i>新建规则</button></div><div id="group-list"></div><p class="empty" id="groups-empty">暂无路由规则</p></section>
 <section id="health-view" hidden><dl id="health-details"></dl></section>
+<section id="verification-view" hidden>
+<form id="verification-form" class="verification-form">
+<div><h2>上游响应模型核验</h2><p>比较客户端请求模型与上游声明的模型。发现不一致时拦截结果并提醒客户端；无法证明上游声明本身真实。</p></div>
+<label class="check"><input id="verify-enabled" type="checkbox">启用响应模型核验</label>
+<label class="check"><input id="verify-stream" type="checkbox">核验流式响应</label>
+<label class="check"><input id="verify-responses-only" type="checkbox">严格模式：流式仅允许 Responses（Codex）</label>
+<label>Responses 暂存上限（字节）<input id="verify-buffer" type="number" min="1048576" max="268435456" step="1048576"></label>
+<label>全部 Responses 暂存上限（字节）<input id="verify-total-buffer" type="number" min="1048576" max="1073741824" step="1048576"></label>
+<label>发现模型不一致<select id="verify-action"><option value="reject">拦截结果并返回错误提醒</option><option value="audit">仅记录日志，保留原响应</option></select></label>
+<label>无法核验模型<select id="verify-unknown"><option value="pass">保留原响应并记录原因</option><option value="reject">拦截并提醒无法核验</option></select></label>
+<p>严格模式下，Chat、Claude、Gemini 等非 Responses 流式请求会在执行前拒绝，因为 CPA 插件接口无法可靠取消这些上游流。Responses 拦截模式在响应完成时判定。</p>
+<label class="check"><input id="verify-case" type="checkbox">区分模型名称大小写</label>
+<label class="check"><input id="verify-thinking" type="checkbox">比较时忽略思考强度后缀，例如 (high)</label>
+<label>跳过核验的请求模型（每行一个）<textarea id="verify-ignored" rows="3" placeholder="例如：auto"></textarea></label>
+<label>允许的响应模型映射（每行：请求模型 = 响应模型1, 响应模型2）<textarea id="verify-accepted" rows="5" placeholder="my-model = provider-model, provider-model-2026"></textarea></label>
+<p>映射仅允许明确列出的名称，不做前缀或通配匹配。新配置用于后续请求，进行中的请求保留开始时配置。Responses 拦截模式暂存全部文本和工具调用，完成核验后才整体放行，因此显示会延迟到响应完成。拦截不会撤销上游调用或费用；HTTP 状态受 CPA 限制可能仍为 200。其他协议已经送出的内容无法撤回。</p>
+<p id="verification-status" role="status" aria-live="polite"></p>
+<p>在 CPA 日志页搜索“响应核验”，可查看已拦截、仅审计、核验通过、无法核验放行及跳过原因。日志包含请求 ID、请求模型和上游模型；流式按决定记录，不逐块刷屏。</p>
+<button id="save-verification" type="submit" class="primary">保存核验配置</button>
+</form>
+</section>
 </div>
 </main>
 <dialog id="editor"><form id="editor-form"><div class="dialog-title"><h2 id="editor-title"></h2><button type="button" id="close-editor" class="icon" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div><div class="dialog-body"><p id="edit-key-value" hidden></p><label><span id="edit-label-title">名称</span><input id="edit-label" required></label><label id="group-note-field" hidden>备注（可选）<textarea id="edit-note" rows="3"></textarea></label><div id="key-fields"><label class="check"><input id="edit-enabled" type="checkbox">启用</label><label>最大并发<input id="edit-limit" type="number" min="0" step="1" value="0"></label><fieldset><legend>绑定规则</legend><div id="bindings"></div></fieldset></div><fieldset><legend>模型</legend><div class="add-option"><input id="model-name" placeholder="搜索 CPA 模型" aria-label="搜索 CPA 模型"></div><div id="model-options" class="options"></div></fieldset><fieldset><legend>凭据类别</legend><div id="category-options" class="options"></div></fieldset><fieldset><legend>单个凭据</legend><div id="credential-options" class="options"></div></fieldset></div><div class="dialog-bottom"><p id="editor-error" role="alert"></p><div class="dialog-footer"><button type="button" id="delete-entry" class="danger"><i data-lucide="trash-2"></i>移除</button><button type="submit" class="primary"><i data-lucide="check"></i>保存</button></div></div></form></dialog>
