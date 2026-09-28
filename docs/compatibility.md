@@ -3,6 +3,78 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
+## Version 0.1.4: response model verification
+
+Only the latest official CPA release is targeted; old adapters are not retained.
+Each build pins an exact release for reproducibility. Historical rows below are
+verification records, not a promise of support. The sole current target is
+v8.0.3 (acdace93), C ABI 1 / host and plugin RPC schema 6. Registration rejects
+other schemas. The handshake does not expose the host release number, so this
+is not an exact host-version runtime check; cpa_version reports the build target.
+Response verification compares the client model with upstream-declared identity
+and must not confuse translated model fields with raw upstream identity. Strict
+mode rejects unsupported non-Responses streaming requests before execution;
+request-before model mismatch rejection is not implemented. Configuration is
+host-managed and disabled by default.
+Rollback requires restoring the prior library and removing the new
+`response_model_mismatch` configuration node while CPA is stopped.
+If a 0.1.4 policy snapshot was saved, also restore a policy backup accepted by
+the prior binary.
+
+New dependency: response.normalize_before provides raw upstream Body and
+OriginalRequest before built-in translation, without RequestID. A unique live
+original-body SHA-256 associates it with the request hook. Identical overlapping
+bodies remain explicitly unverifiable. No request bodies or hashes are logged
+or persisted. response.intercept_after replaces non-stream responses;
+response.intercept_stream_chunk uses JSON for OpenAI Chat and framed SSE for
+Claude, Responses and Gemini, then DropChunk suppresses subsequent output.
+Response hooks cannot override HTTP status or terminate upstream execution.
+request.complete releases verification state. Policy v1 accepts 0.1.0–0.1.4.
+
+Response-verification diagnostics use the official `host.log` callback with
+`level`, `message`, and `fields` (plugin_id/request_id). v8.0.3's formatter only
+prints selected fields, so the quoted decision/model details are in the message.
+The fixture verifies delivery through CPA's authenticated `/v0/management/logs`.
+No policy/config migration is needed; restore the prior library to roll back logs.
+
+Responses stream rejection uses an explicit `response.failed` terminal event,
+error status 403 and `invalid_prompt` as the Codex-compatible non-retryable wire
+code. `verification_code` and the message retain the actual verification reason.
+Codex treats unknown response.failed codes as retryable; retryable=false alone
+does not change its classification. CPA v8.0.3 recognizes error.status and
+cancels the Responses execution context on terminal errors. This dependency
+requires a real streaming cancellation fixture and Codex CLI retry acceptance.
+
+Responses reject mode now withholds all successful payloads until a complete
+terminal response event and the model decision. This prevents early text/tool
+events from executing before a late model declaration. UnknownAction is applied
+at the terminal event, not to intermediate missing-model chunks. Raw-body
+observation and DropChunk remain the only ABI dependencies. Buffered SSE bytes
+stay in request-local memory and are discarded on rejection/cancellation; memory
+use is proportional to the pending response. No config migration is required.
+CPA's native Codex translator emits complete data lines without delimiters, and
+its Chat translator emits event/data pairs without trailing delimiters. Captured
+unit fixtures normalize both forms; fragmented standard SSE remains buffered.
+Real Codex 0.155.1 checks cover late model declarations and model changes after
+complete tool items: no text/tool leakage, one upstream request, cancellation
+and no reconnection. The previous deployed library reproduces the tool leak.
+Strict stream mode rejects non-Responses streaming requests before execution,
+because the v8.0.3 ABI has no general stream-abort callback for Chat, Claude,
+or Gemini. Responses buffering is bounded per request by `max_buffer_bytes`
+(default 16 MiB, configurable up to 256 MiB); exceeding it fails closed.
+
+Verification on 2026-09-28: official v8.0.3 Linux amd64 release binary,
+Go 1.26.5 / Debian bookworm, in isolated Docker fixtures. Unit/management tests,
+vet, race and dynamic-loading tests passed. Model mismatch rejection passed
+OpenAI Chat non-stream/stream, Responses non-stream/stream, and Claude/Gemini
+streaming clients translated from a synthetic OpenAI upstream. Explicit mappings,
+unknown rejection and original admission/cancellation/restart/rollback passed.
+Edge browser tests passed configuration validation, save, reload, CPA restart
+persistence, real error/header delivery and desktop/mobile layouts.
+Native external provider connections, arbitrary other plugins and WebSocket
+interception are not certified. The existing service was upgraded to the v8.0.3
+release image after plugin, configuration and policy-state backup.
+
 ## Version 0.1.2 model-list filtering
 
 Client request errors now use Chinese messages. Disabled policy keys return
@@ -19,7 +91,7 @@ false bypasses only model-list response processing. Policy v1 snapshots from
 0.1.0/0.1.1 remain accepted. Before binary downgrade remove the new config field;
 restore a matching policy backup if a newer producer version has been saved.
 
-The current development target is CPA v7.3.8 only, C ABI 1 / host schema 6,
+The historical 0.1.2 development target was CPA v7.3.8, C ABI 1 / host schema 6,
 plugin schema 4. Older releases below are historical verification records.
 This release adds `response.intercept_after` using v7.3.8's
 `WriteModelListResponse`: empty Model/RequestedModel and request bodies,
@@ -62,6 +134,8 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.4 | v8.0.3 (`acdace936fa7df2905500c7f5e0a97d683138dea`) | C ABI 1 / host and plugin schema 6 | current target; verified on Linux amd64 | Configurable raw upstream response model verification and HTTP/SSE interception |
+| 0.1.3 | v7.3.12 (`2eb8dd11`) | C ABI 1 / host and plugin schema 6 | historical verification record | Initial response model verification and HTTP/SSE interception |
 | 0.1.2 | v7.3.8 (`c93978c`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Model-list filtering, host-managed toggle and Chinese policy errors; policy schema accepts 0.1.0–0.1.2 snapshots |
 | 0.1.0 | v7.2.143 (`4b5f1eab25fca4b3815369a826e958e7c070a69e`) | C ABI 1 / RPC schema 4 | verified on Linux and Windows amd64 | Go 1.26.0 minimum; CGO required |
 | 0.1.0 | v7.3.7 (`b773607e3e7756dc6020a291825e4eb08899595a`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Fixture passed with the binary copied from the running Docker container |
@@ -107,13 +181,16 @@ No migration is required; backups remain the binary rollback procedure.
 
 - Windows amd64: Go 1.26.4, WinLibs UCRT GCC 16.2.0 / MinGW-w64 14.0.0.
 - Linux amd64: Go 1.26.5, Debian bookworm container, glibc dynamic library.
-- Both platforms: `go vet`, unit/management tests, race tests and real CPA v7.2.143
+- Linux amd64: `go vet`, unit/management tests, race tests and the real CPA v8.0.3
   dynamic-loading fixture passed. The fixture uses synthetic keys and a loopback
   OpenAI-compatible upstream, including streaming cancellation and policy restart.
+- Windows amd64: native unit tests passed. The local MinGW 8.1 race executable
+  could not start because its runtime lacked an entry point; use the current UCRT
+  toolchain described in `testing.md` before treating a Windows race run as valid.
 - Browser: Playwright with Microsoft Edge; 1440x1000 desktop and 390x844 mobile;
   policy publication, reload and rollback exercised against the real Windows CPA.
 - CPA v6 and no-plugin builds are unsupported; upgrade CPA before installation.
-- The v7.3.7 host accepts the plugin's schema 4 registration. New cross-priority
+- The v8.0.3 host accepts the plugin's schema 6 registration. New cross-priority
   scheduling is not enabled; the original highest-priority-tier contract remains.
 - Plugin-store installations add host-managed `store` metadata to the normalized
   plugin configuration. The plugin accepts this node while continuing to reject
@@ -123,12 +200,12 @@ No migration is required; backups remain the binary rollback procedure.
 
 ## Pinning procedure
 
-1. Select a CPA release or commit used by the deployment environment.
+1. Select the latest official CPA release and pin its exact tag/commit.
 2. Record the exact tag/commit, Go toolchain, plugin ABI version, hook names, metadata
    keys, and management route behavior.
 3. Build a minimal hello-world ABI fixture against that revision.
 4. Add fixture results and incompatibilities to this table.
 
-Do not claim compatibility with a moving `main` branch. If CPA changes a hook payload,
-host table, or ABI entry point, create a new compatibility row and keep the old adapter
-until its support window ends.
+Do not claim compatibility with a moving `main` branch. When CPA changes a hook
+payload, host table or ABI entry point, update the single current adapter and
+fixture before releasing. Older versions remain historical evidence only.

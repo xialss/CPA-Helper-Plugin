@@ -17,13 +17,16 @@ import (
 	"cpa-helper-plugin/internal/policy"
 	run "cpa-helper-plugin/internal/runtime"
 	"cpa-helper-plugin/internal/snapshot"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"gopkg.in/yaml.v3"
 )
 
 // ID is both the CPA plugin filename and configuration identifier.
 const ID = "cpa-helper-plugin"
+
+// CPAVersion is the single release targeted by this build.
+const CPAVersion = "v8.0.3"
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"
@@ -38,17 +41,22 @@ type HostCall func(method string, payload any) (json.RawMessage, error)
 type App struct {
 	mu                     sync.RWMutex
 	modelListFilterEnabled bool
+	modelMismatch          modelMismatchConfig
 	store                  *snapshot.Store
 	stateDir               string
 	runtime                *run.Runtime
 	host                   HostCall
 	inventoryMu            sync.Mutex
 	credentials            map[string]credential
+	mismatchMu             sync.Mutex
+	modelMismatchStates    map[string]*modelMismatchState
+	mismatchRequests       map[[32]byte]map[string]bool
+	responseBufferBytes    int
 }
 
 // New constructs a plugin before CPA registration supplies configuration.
 func New(host HostCall) *App {
-	return &App{modelListFilterEnabled: true, runtime: run.New(), host: host, credentials: map[string]credential{}}
+	return &App{modelListFilterEnabled: true, modelMismatch: defaultModelMismatchConfig(), runtime: run.New(), host: host, credentials: map[string]credential{}, modelMismatchStates: map[string]*modelMismatchState{}, mismatchRequests: map[[32]byte]map[string]bool{}}
 }
 
 type lifecycle struct {
@@ -56,11 +64,12 @@ type lifecycle struct {
 	SchemaVersion uint32 `json:"schema_version"`
 }
 type config struct {
-	ModelListFilterEnabled bool      `yaml:"model_list_filter_enabled"`
-	StateDir               string    `yaml:"state_dir"`
-	Enabled                bool      `yaml:"enabled"`
-	Priority               int       `yaml:"priority"`
-	Store                  yaml.Node `yaml:"store"`
+	ModelListFilterEnabled bool                `yaml:"model_list_filter_enabled"`
+	ResponseModelMismatch  modelMismatchConfig `yaml:"response_model_mismatch"`
+	StateDir               string              `yaml:"state_dir"`
+	Enabled                bool                `yaml:"enabled"`
+	Priority               int                 `yaml:"priority"`
+	Store                  yaml.Node           `yaml:"store"`
 }
 type registration struct {
 	SchemaVersion uint32             `json:"schema_version"`
@@ -76,10 +85,10 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, errors.New("invalid registration payload")
 		}
-		if req.SchemaVersion < 4 {
-			return nil, errors.New("CPA schema 4 or newer is required")
+		if req.SchemaVersion != pluginabi.SchemaVersion {
+			return nil, fmt.Errorf("CPA schema %d is required", pluginabi.SchemaVersion)
 		}
-		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true}
+		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true, ResponseModelMismatch: defaultModelMismatchConfig()}
 		if len(bytes.TrimSpace(req.ConfigYAML)) > 0 {
 			decoder := yaml.NewDecoder(bytes.NewReader(req.ConfigYAML))
 			decoder.KnownFields(true)
@@ -89,6 +98,9 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		}
 		if strings.TrimSpace(cfg.StateDir) == "" {
 			return nil, errors.New("state_dir must not be empty")
+		}
+		if err := cfg.ResponseModelMismatch.Validate(); err != nil {
+			return nil, err
 		}
 		dir, err := filepath.Abs(cfg.StateDir)
 		if err != nil {
@@ -104,18 +116,36 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			a.stateDir = dir
 		}
 		a.modelListFilterEnabled = cfg.ModelListFilterEnabled
+		a.modelMismatch = cfg.ResponseModelMismatch
 		a.runtime.Resume()
 		a.mu.Unlock()
-		return ok(registration{4, pluginapi.Metadata{Name: ID, Version: policy.Version, Author: "CPA-Helper", GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg", ConfigFields: []pluginapi.ConfigField{{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Dedicated persistent policy directory; parent must exist."}, {Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"}}}, map[string]bool{"request_interceptor": true, "response_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true}})
-	case pluginabi.MethodResponseInterceptAfter:
-		if !a.modelListFiltering() {
-			return ok(pluginapi.ResponseInterceptResponse{})
+		a.logModelConfiguration(cfg.ResponseModelMismatch)
+		return ok(registration{pluginabi.SchemaVersion, pluginapi.Metadata{Name: ID, Version: policy.Version, Author: "CPA-Helper", GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg", ConfigFields: []pluginapi.ConfigField{{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Dedicated persistent policy directory; parent must exist."}, {Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"}, {Name: "response_model_mismatch", Type: pluginapi.ConfigFieldTypeObject, Description: "上游响应模型不匹配检测；默认关闭。"}}}, map[string]bool{"request_interceptor": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true}})
+	case pluginabi.MethodResponseNormalizeBefore:
+		var req pluginapi.ResponseTransformRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, errors.New("invalid raw response payload")
 		}
+		a.observeResponseModel(req)
+		return ok(pluginapi.PayloadResponse{})
+	case pluginabi.MethodResponseInterceptAfter:
 		var req pluginapi.ResponseInterceptRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return modelListError("invalid_model_catalog", "模型列表响应载荷格式无效")
 		}
+		if req.Model != "" || req.RequestedModel != "" || len(req.OriginalRequest) != 0 || len(req.RequestBody) != 0 {
+			return a.interceptResponseModel(req)
+		}
+		if !a.modelListFiltering() {
+			return ok(pluginapi.ResponseInterceptResponse{})
+		}
 		return a.filterModelList(req)
+	case pluginabi.MethodResponseInterceptStreamChunk:
+		var req pluginapi.StreamChunkInterceptRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, errors.New("invalid stream interception payload")
+		}
+		return a.interceptStreamModel(req)
 	case pluginabi.MethodRequestInterceptBefore:
 		var req pluginapi.RequestInterceptRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -130,6 +160,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			return nil, errors.New("invalid completion payload")
 		}
 		a.runtime.Complete(req.RequestID)
+		a.completeModelMismatch(req.RequestID)
 		return ok(struct{}{})
 	case pluginabi.MethodSchedulerPick:
 		var req pluginapi.SchedulerPickRequest
@@ -147,6 +178,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		return a.management(req)
 	case pluginabi.MethodPluginQuiesce, pluginabi.MethodPluginShutdown:
 		a.runtime.Quiesce()
+		a.clearModelMismatchStates()
 		return ok(struct{}{})
 	default:
 		return ErrorEnvelope("unknown_method", "unsupported plugin method", http.StatusNotFound)
@@ -154,7 +186,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 }
 
 // Shutdown prevents admission after the host begins unloading the instance.
-func (a *App) Shutdown() { a.runtime.Quiesce() }
+func (a *App) Shutdown() { a.runtime.Quiesce(); a.clearModelMismatchStates() }
 func (a *App) modelListFiltering() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -194,8 +226,13 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 	if err != nil {
 		return denied(503, "policy_unavailable", "当前策略不可用，请联系管理员", req.SourceFormat)
 	}
-	k := e.Resolve(scope)
+	verification := a.modelMismatchSettings()
 	model := requestedModel(req.Model, req.RequestedModel)
+	generation := true
+	if value, ok := req.Metadata["generate"].(bool); ok {
+		generation = value
+	}
+	k := e.Resolve(scope)
 	if !k.Enabled {
 		a.audit(scope, rev, "api_key_disabled")
 		return denied(401, "api_key_disabled", disabledKeyMessage(scope, req.Headers), req.SourceFormat)
@@ -204,12 +241,17 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 		a.audit(scope, rev, "denied_model")
 		return denied(403, "model_forbidden", reason, req.SourceFormat)
 	}
+	if req.Stream && generation && verification.Enabled && verification.StreamEnabled && verification.Action == "reject" && verification.ResponsesOnlyStream && req.SourceFormat != "openai-response" && !verification.Ignores(model) {
+		a.logUnsupportedStream(req.RequestID, model, req.SourceFormat)
+		return denied(400, "response_model_stream_unsupported", "严格响应核验模式仅支持 Responses 流式协议", req.SourceFormat)
+	}
 	if generate, ok := req.Metadata["generate"].(bool); !ok || generate {
 		if !a.runtime.Admit(req.RequestID, k.MaxConcurrency) {
 			a.audit(scope, rev, "concurrency_rejected")
 			return denied(429, "concurrency_limit", "当前 API Key 已达设定并发上限", req.SourceFormat)
 		}
 	}
+	a.beginModelMismatch(req)
 	return ok(pluginapi.RequestInterceptResponse{})
 }
 
@@ -298,7 +340,7 @@ func ok(v any) ([]byte, error) {
 	return json.Marshal(pluginabi.Envelope{OK: true, Result: raw})
 }
 
-// ErrorEnvelope preserves HTTP status across the CPA v7.3.8 C ABI boundary.
+// ErrorEnvelope preserves HTTP status across the CPA v8.0.3 C ABI boundary.
 func ErrorEnvelope(code, message string, status int) ([]byte, error) {
 	return json.Marshal(pluginabi.Envelope{OK: false, Error: &pluginabi.Error{Code: code, Message: message, HTTPStatus: status}})
 }

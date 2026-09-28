@@ -12,7 +12,7 @@ import (
 
 	"cpa-helper-plugin/internal/policy"
 	"cpa-helper-plugin/internal/snapshot"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 //go:embed web/*
@@ -25,7 +25,7 @@ type managementRequest struct {
 
 func managementRegistration() any {
 	routes := []pluginapi.ManagementRoute{}
-	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}} {
+	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"POST", "/response-model/validate"}} {
 		routes = append(routes, pluginapi.ManagementRoute{Method: r[0], Path: BasePath + r[1]})
 	}
 	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}}
@@ -104,10 +104,35 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		return
 	}
 	if r.Method == "GET" && path == "/capabilities" {
-		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": 1, "schema_version": 4, "cpa_version": "v7.3.8", "model_list_filter_enabled": a.modelListFiltering(), "modules": []string{"model_rules", "model_list_filter", "credential_routes", "concurrency"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
+		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": 1, "schema_version": 6, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "response_model_mismatch": a.modelMismatchSettings(), "modules": []string{"model_rules", "model_list_filter", "response_model_mismatch", "credential_routes", "concurrency"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
 		return
 	}
 	s := a.currentStore()
+	if r.Method == "POST" && path == "/response-model/validate" {
+		defaults := defaultModelMismatchConfig()
+		cfg := &defaults
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&cfg); err != nil {
+			problem(w, 400, "invalid_response_model_config", err.Error())
+			return
+		}
+		if cfg == nil {
+			problem(w, 400, "invalid_response_model_config", "Expected a JSON object")
+			return
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			problem(w, 400, "invalid_response_model_config", "Expected one JSON object")
+			return
+		}
+		if err := cfg.Validate(); err != nil {
+			problem(w, 400, "invalid_response_model_config", err.Error())
+			return
+		}
+		jsonResponse(w, 200, cfg)
+		return
+	}
 	if s == nil {
 		problem(w, 503, "policy_unavailable", "Plugin not configured")
 		return
@@ -121,8 +146,9 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		}
 		jsonResponse(w, status, struct {
 			snapshot.Health
-			Active map[string]int `json:"active"`
-		}{h, a.runtime.Counts()})
+			Active           map[string]int `json:"active"`
+			ResponseTracking int            `json:"response_model_tracked_requests"`
+		}{h, a.runtime.Counts(), a.modelMismatchActive()})
 	case "GET /policy":
 		p, err := s.Current()
 		if err != nil {

@@ -9,15 +9,15 @@ import (
 	"testing"
 
 	"cpa-helper-plugin/internal/policy"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"gopkg.in/yaml.v3"
 )
 
 func configured(t *testing.T) *App {
 	t.Helper()
 	a := New(nil)
-	raw, _ := json.Marshal(lifecycle{SchemaVersion: 4, ConfigYAML: []byte("state_dir: " + filepath.ToSlash(filepath.Join(t.TempDir(), "state")))})
+	raw, _ := json.Marshal(lifecycle{SchemaVersion: pluginabi.SchemaVersion, ConfigYAML: []byte("state_dir: " + filepath.ToSlash(filepath.Join(t.TempDir(), "state")))})
 	env := invoke(t, a, "plugin.register", json.RawMessage(raw))
 	if !env.OK {
 		t.Fatal(string(env.Result))
@@ -26,7 +26,7 @@ func configured(t *testing.T) *App {
 	if err := json.Unmarshal(env.Result, &registration); err != nil {
 		t.Fatal(err)
 	}
-	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || registration.SchemaVersion != 4 {
+	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || !registration.Capabilities["response_stream_interceptor"] || registration.SchemaVersion != pluginabi.SchemaVersion {
 		t.Fatal("invalid CPA registration")
 	}
 	return a
@@ -37,7 +37,7 @@ func TestPluginRegisterRejectsUnknownConfigurationField(t *testing.T) {
 	validDir := filepath.ToSlash(filepath.Join(t.TempDir(), "valid"))
 	wrongDir := filepath.ToSlash(filepath.Join(t.TempDir(), "wrong"))
 	raw, err := json.Marshal(lifecycle{
-		SchemaVersion: 4,
+		SchemaVersion: pluginabi.SchemaVersion,
 		ConfigYAML:    []byte("state_dir: " + validDir + "\nstate_dri: " + wrongDir),
 	})
 	if err != nil {
@@ -55,7 +55,7 @@ func TestPluginLifecycleAcceptsHostManagedStoreMetadata(t *testing.T) {
 	a := New(nil)
 	stateDir := filepath.ToSlash(filepath.Join(t.TempDir(), "state"))
 	raw, err := json.Marshal(lifecycle{
-		SchemaVersion: 4,
+		SchemaVersion: pluginabi.SchemaVersion,
 		ConfigYAML: []byte("enabled: true\nstate_dir: " + stateDir + "\nstore:\n" +
 			"  id: cpa-helper-plugin\n" +
 			"  release-tag: v0.1.0\n" +
@@ -169,11 +169,11 @@ func TestCPAReconfigureAfterQuiesceRestoresAdmission(t *testing.T) {
 	if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.StatusCode != 503 {
 		t.Fatal("quiesced instance admitted a request", resp)
 	}
-	configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true})
+	configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true, ResponseModelMismatch: defaultModelMismatchConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env := invoke(t, a, pluginabi.MethodPluginReconfigure, lifecycle{SchemaVersion: 4, ConfigYAML: configYAML}); !env.OK {
+	if env := invoke(t, a, pluginabi.MethodPluginReconfigure, lifecycle{SchemaVersion: pluginabi.SchemaVersion, ConfigYAML: configYAML}); !env.OK {
 		t.Fatal(env.Error)
 	}
 	request.RequestID = "still-limited"

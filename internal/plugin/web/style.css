@@ -10,4 +10,5 @@ td:first-child{max-width:420px;overflow-wrap:anywhere}#edit-key-value{overflow-w
 #editor .dialog-bottom{flex-shrink:0;padding:12px 24px 18px;background:#fff;border-top:1px solid #e5e5e5;display:grid;gap:10px}
 #editor .dialog-footer{position:static;padding:0;margin:0;border:0}
 #editor-error:empty{display:none}
+.verification-form{max-width:780px;display:grid;gap:16px;padding-bottom:24px}.verification-form p{margin:0;font-size:12px}.verification-form textarea{font:inherit;width:100%;resize:vertical;border:1px solid #ddd;border-radius:4px;padding:10px}.verification-form button{justify-self:start}nav{flex-wrap:wrap}#verification-status{color:#276046}
 @media(max-width:650px){#editor .dialog-title{padding:16px 18px}#editor .dialog-body{padding:16px 18px}#editor .dialog-bottom{padding:12px 18px 16px}}

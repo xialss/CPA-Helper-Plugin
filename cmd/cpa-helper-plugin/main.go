@@ -30,7 +30,7 @@ import (
 	"unsafe"
 
 	"cpa-helper-plugin/internal/plugin"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 )
 
 var app = plugin.New(callHost)

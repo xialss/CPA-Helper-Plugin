@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "test:ui": "node scripts/browser-smoke.mjs",
+    "test:response-ui": "node scripts/response-model-ui-smoke.mjs",
+    "test:codex-verification": "node scripts/codex-verification-smoke.mjs",
     "preview": "node scripts/browser-smoke.mjs --serve"
   },
   "devDependencies": {

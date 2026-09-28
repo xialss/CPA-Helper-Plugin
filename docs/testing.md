@@ -20,7 +20,7 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a small fixture or test harness pinned to each supported CPA version. It should
+Keep a fixture pinned to the single current CPA release (v8.0.3). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. V1 does not
 register a usage callback.
@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v7.3.8 binary for the target platform.
+Download the official plugin-enabled CPA v8.0.3 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v7.3.8\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.3\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -60,7 +60,7 @@ real credentials. It checks management authentication, static resources, aliases
 rollback. The test stops its CPA process and removes temporary state at completion.
 CPA itself can still perform its own background version checks.
 
-The v7.3.8 fixture also checks that `/v1/models` contains only the permitted
+The v8.0.3 fixture also checks that `/v1/models` contains only the permitted
 alias for the restricted caller. Unit contract fixtures cover OpenAI, Claude
 cloaking/pagination IDs, Gemini, Codex, group denial precedence, disabled and
 unconfigured keys, missing/ambiguous headers, malformed catalogs and policy
@@ -76,9 +76,46 @@ so a build artifact may have a trial suffix without changing its host plugin ID.
 
 ## Browser verification and preview
 
+Codex streaming rejection acceptance uses `npm run test:codex-verification`.
+Set `CODEX_TEST_BINARY` to the installed Codex executable (verified 0.155.1).
+It uses the same isolated Docker artifacts as the response UI test, synthetic
+credentials and a mock upstream that stays open until cancellation. It checks
+immediate mismatch, delayed mismatch and strict unknown rejection: one upstream
+request, cancellation, no automatic reconnection and a failed client turn.
+`CPA_PLUGIN_BINARY` optionally selects a different library; `--baseline` on the
+script reproduces the former retry bug against the old library. The client uses
+`--ignore-user-config`, read-only sandboxing and an empty temporary workspace;
+no real provider or deployment configuration is used.
+
+The Responses buffering regression additionally sends a complete synthetic tool
+call before a late model mismatch, and a matching initial model that changes at
+completion. Wire and real Codex checks assert that neither text nor tools escape;
+a matched response still completes. `--leak-baseline` reproduces early tool leakage
+against the previous library. Unit fixtures cover delimiterless native Codex data
+lines, Chat-to-Responses events, fragmented CRLF, buffer limits, strict
+non-Responses rejection, upstream failure and cancellation. Native delimiterless
+frames are tested at the CPA v8.0.3 translator callback boundary; the plugin
+does not infer missing boundaries from arbitrary byte fragments.
+
+Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
+Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.3
+Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
+`cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
+The script creates its own temporary config, synthetic keys, mock upstream and
+container, then removes them. It does not replace the running CPA installation.
+Screenshots: `test-results/response-model-{desktop,mobile}.png`.
+It checks validated panel save, invalid input, refresh, restart persistence,
+an actual mismatch error/header and responsive layout.
+
+The Go real fixture additionally checks OpenAI Chat, Responses, Claude and Gemini
+HTTP/SSE delivery from a synthetic OpenAI upstream, suppressing mismatched content,
+explicit mappings and unknown rejection. Unit tests cover raw-vs-translated
+identity, exact matching, lifecycle cleanup, ambiguity, concurrent observation and
+transactional reconfiguration. Ordinary upstream traffic is not used.
+
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v7.3.8\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.3\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```
@@ -107,7 +144,7 @@ registered model, and checks the actual `403/model_forbidden` response. Cleanup
 removes the temporary key and rolls the policy back under revision preconditions.
 It never sends a permitted generation request. Policy revisions and audit logs
 advance. Do not run during concurrent management edits. See
-`docs/docker-deployment.md` for the actual v7.3.7 acceptance evidence.
+`docs/docker-deployment.md` for the actual v8.0.3 acceptance evidence.
 
 ## Platform notes
 

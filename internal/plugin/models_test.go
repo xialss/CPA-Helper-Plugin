@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"cpa-helper-plugin/internal/policy"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 func TestModelListFilterReconfiguration(t *testing.T) {
@@ -40,7 +40,7 @@ func TestModelListFilterReconfiguration(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &caps); err != nil {
 			t.Fatal(err)
 		}
-		if caps.CPA != "v7.3.8" || caps.Version != "0.1.2" || caps.Enabled != enabled {
+		if caps.CPA != CPAVersion || caps.Version != policy.Version || caps.Enabled != enabled {
 			t.Fatalf("incorrect capabilities: %+v", caps)
 		}
 		generation := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, pluginapi.RequestInterceptRequest{RequestID: "toggle-test", Model: "blocked", Metadata: map[string]any{"caller_scope": policy.CallerScope("key")}}))

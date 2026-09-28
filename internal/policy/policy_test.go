@@ -125,11 +125,15 @@ func TestValidation(t *testing.T) {
 	}
 }
 
-func TestPreviousPluginVersionRemainsCompatible(t *testing.T) {
-	s := Initial()
-	s.PluginVersion = "0.1.0"
-	if _, err := Compile(s); err != nil {
-		t.Fatal(err)
+func TestPreviousPluginVersionsRemainCompatible(t *testing.T) {
+	for _, version := range []string{"0.1.0", "0.1.1", "0.1.2", "0.1.3"} {
+		t.Run(version, func(t *testing.T) {
+			s := Initial()
+			s.PluginVersion = version
+			if _, err := Compile(s); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
