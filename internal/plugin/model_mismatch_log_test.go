@@ -79,21 +79,6 @@ func TestVerificationLogsDoNotClaimUninspectedOutputPassed(t *testing.T) {
 	}
 }
 
-func TestUnsupportedStreamLogsBeforeExecution(t *testing.T) {
-	a := mismatchApp(t)
-	var message string
-	a.host = func(_ string, payload any) (json.RawMessage, error) {
-		message = payload.(hostLogRequest).Message
-		return nil, nil
-	}
-	a.logUnsupportedStream("r", "client-model", "openai")
-	for _, want := range []string{"result=blocked", "code=\"response_model_stream_unsupported\"", "reason=\"non_responses_stream\"", "source_format=\"openai\""} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("missing %s: %s", want, message)
-		}
-	}
-}
-
 func TestVerificationLogFailurePreservesInterception(t *testing.T) {
 	a := mismatchApp(t)
 	a.host = func(_ string, _ any) (json.RawMessage, error) { return nil, errors.New("unavailable") }

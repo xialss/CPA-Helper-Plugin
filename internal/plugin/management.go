@@ -28,7 +28,7 @@ func managementRegistration() any {
 	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"POST", "/response-model/validate"}} {
 		routes = append(routes, pluginapi.ManagementRoute{Method: r[0], Path: BasePath + r[1]})
 	}
-	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}}
+	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}, {Path: "/directory.js"}}
 	return struct {
 		Routes    []pluginapi.ManagementRoute `json:"routes"`
 		Resources []pluginapi.ResourceRoute   `json:"resources"`
@@ -43,7 +43,7 @@ func (a *App) management(req managementRequest) ([]byte, error) {
 		case "ui":
 			name = "index.html"
 			mime = "text/html; charset=utf-8"
-		case "app.js", "lucide.js", "sha256.js":
+		case "app.js", "lucide.js", "sha256.js", "directory.js":
 			mime = "application/javascript"
 		case "style.css":
 			mime = "text/css"

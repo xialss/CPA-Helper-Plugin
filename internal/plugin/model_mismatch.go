@@ -273,25 +273,9 @@ func (a *App) interceptStreamModel(req pluginapi.StreamChunkInterceptRequest) ([
 		}
 		return ok(pluginapi.StreamChunkInterceptResponse{})
 	}
-	if s.Alerted && s.Config.ResponsesOnlyStream && s.Config.Action == "reject" && req.SourceFormat != "openai-response" {
-		return ok(pluginapi.StreamChunkInterceptResponse{DropChunk: true})
-	}
 	format := req.SourceFormat
 	if format == "" {
 		format = s.SourceFormat
-	}
-	if s.Config.Enabled && s.Config.Action == "reject" && s.Config.ResponsesOnlyStream && format != "" && format != "openai-response" {
-		s.Alerted = true
-		e := &modelCheckError{Type: "model_verification_error", Code: "response_model_stream_unsupported", Message: "严格响应核验模式仅支持 Responses 流式协议", Requested: s.Requested, RequestID: req.RequestID, Reason: "non_responses_stream"}
-		s.Blocked = true
-		s.Terminal = true
-		s.UpstreamFailed = true
-		a.logModelDecision(req.RequestID, s, "blocked", e.Code, e.Reason)
-		body := verificationBody(e, format)
-		if format != "openai" {
-			body = []byte("event: error\ndata: " + string(body) + "\n\n")
-		}
-		return ok(pluginapi.StreamChunkInterceptResponse{Body: body})
 	}
 	if format == "openai-response" && s.Config.Enabled && s.Config.Action == "reject" {
 		return a.interceptBufferedResponses(req, s)

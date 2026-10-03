@@ -60,7 +60,7 @@ the existing CPA management key. Credentials are not included in this repository
 ## Operational rollback
 
 Disable only this plugin through authenticated `PATCH
-/v0/management/plugins/cpa-helper-plugin/enabled` with `{"enabled":false}`.
+/v8/management/config/plugins/configs/cpa-helper-plugin` with `{"enabled":false}`.
 This removes its admission and routing restrictions; assess active policy first.
 Retain the mounted state directory. Binary or state restoration requires stopping
 CPA first; do not overwrite state underneath a running plugin.

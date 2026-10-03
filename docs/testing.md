@@ -20,7 +20,7 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a fixture pinned to the single current CPA release (v8.0.3). It should
+Keep a fixture pinned to the single current CPA release (v8.0.12). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. V1 does not
 register a usage callback.
@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v8.0.3 binary for the target platform.
+Download the official plugin-enabled CPA v8.0.12 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v8.0.3\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.12\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -60,7 +60,7 @@ real credentials. It checks management authentication, static resources, aliases
 rollback. The test stops its CPA process and removes temporary state at completion.
 CPA itself can still perform its own background version checks.
 
-The v8.0.3 fixture also checks that `/v1/models` contains only the permitted
+The v8.0.12 fixture also checks that `/v1/models` contains only the permitted
 alias for the restricted caller. Unit contract fixtures cover OpenAI, Claude
 cloaking/pagination IDs, Gemini, Codex, group denial precedence, disabled and
 unconfigured keys, missing/ambiguous headers, malformed catalogs and policy
@@ -92,13 +92,13 @@ call before a late model mismatch, and a matching initial model that changes at
 completion. Wire and real Codex checks assert that neither text nor tools escape;
 a matched response still completes. `--leak-baseline` reproduces early tool leakage
 against the previous library. Unit fixtures cover delimiterless native Codex data
-lines, Chat-to-Responses events, fragmented CRLF, buffer limits, strict
-non-Responses rejection, upstream failure and cancellation. Native delimiterless
-frames are tested at the CPA v8.0.3 translator callback boundary; the plugin
+lines, Chat-to-Responses events, fragmented CRLF, buffer limits,
+non-Responses admission and per-chunk verification, upstream failure and cancellation. Native delimiterless
+frames are tested at the CPA translator callback boundary; the plugin
 does not infer missing boundaries from arbitrary byte fragments.
 
 Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
-Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.3
+Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.12
 Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
 `cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
 The script creates its own temporary config, synthetic keys, mock upstream and
@@ -115,10 +115,27 @@ transactional reconfiguration. Ordinary upstream traffic is not used.
 
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v8.0.3\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.12\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```
+
+`npm run test:directory` checks v8 grouped credentials, host `auth_index`, shared
+indexes, duplicate keys, group inheritance, keyless providers, file credentials,
+invalid indexes and secret masking. The real CPA fixture verifies the configured
+credential ID bridge with actual subset routing; v8.0.12's file directory omits
+configured credentials and scheduler hooks do not expose their indexes.
+The browser fixture rejects deprecated host API calls and verifies v8 config
+PUT, mapping deletion, preservation of sibling settings, MiB-to-byte conversion and reload.
+It also loads a legacy `api-key-entries: null` keyless group, asserts the real v8
+`keys: null`/group `auth_index` response and successful directory synchronization.
+A Claude credential with an own `__proto__` header is selected using the browser's
+directory adapter: allow must reach the mock upstream, deny must return a 503
+routing error without reaching it. After asserting successful null-list discovery,
+the fixture normalizes its list to `[]`: CPA v8.0.12 reads legacy null lists but
+rejects them when validating v8 configuration writes. Directory unit tests additionally
+cover inherited and per-key prototype-named headers for Claude/Codex and reject
+malformed credential lists other than the supported keyless null value.
 
 Browser verification uses installed Microsoft Edge through Playwright. It starts
 its own CPA instance and mock upstream, then checks encoded CPA session reuse,

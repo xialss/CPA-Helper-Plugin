@@ -15,7 +15,7 @@ async function call(path, options = {}) {
   assert.equal(response.status, options.expected ?? 200, `Unexpected response: ${response.status}`);
   return body;
 }
-const listing = await call('/v0/management/plugins');
+const listing = await call('/v8/management/plugins');
 const plugin = listing.plugins.find(p => p.id === 'cpa-helper-plugin');
 assert.equal(plugin?.effective_enabled, true);
 assert(plugin.menus.some(m => m.path === '/v0/resource/plugins/cpa-helper-plugin/ui'));
@@ -23,8 +23,8 @@ const original = await call(base + '/policy');
 // Run against a newly installed unrestricted policy only; never alter user rules.
 assert.equal(original.keys.length, 0, 'Live smoke requires an empty key policy');
 assert.equal(original.groups.length, 0, 'Live smoke requires an empty group policy');
-const directory = await call('/v0/management/api-keys');
-const existingKey = directory['api-keys'][0];
+const directory = await call('/v8/management/config/access/api-keys');
+const existingKey = directory[0];
 assert.equal(typeof existingKey, 'string');
 const models = await call('/v1/models', { headers: { Authorization: `Bearer ${existingKey}` } });
 const sentinel = models.data[0]?.id;
@@ -45,8 +45,8 @@ try {
     method: 'PUT', body: JSON.stringify(draft),
     headers: { 'Content-Type': 'application/json', 'If-Match': String(original.policy_revision), 'Idempotency-Key': transaction },
   });
-  await call('/v0/management/api-keys', {
-    method: 'PATCH', body: JSON.stringify({ old: downstream, new: downstream }),
+  await call('/v8/management/config/access/api-keys', {
+    method: 'PUT', body: JSON.stringify([...directory, downstream]),
     headers: { 'Content-Type': 'application/json' },
   });
   const readyBy = Date.now() + 10000;
@@ -68,9 +68,10 @@ try {
   assert.equal(denied.error.code, 'model_forbidden');
   console.log('Live CPA: official menu registered, policy published, request denied with 403/model_forbidden.');
 } finally {
-  await call('/v0/management/api-keys?value=' + encodeURIComponent(downstream), { method: 'DELETE' });
-  const remaining = await call('/v0/management/api-keys');
-  assert(!remaining['api-keys'].includes(downstream), 'Temporary key cleanup failed');
+  const currentKeys = await call('/v8/management/config/access/api-keys');
+  await call('/v8/management/config/access/api-keys', { method: 'PUT', body: JSON.stringify(currentKeys.filter(value => value !== downstream)), headers: { 'Content-Type': 'application/json' } });
+  const remaining = await call('/v8/management/config/access/api-keys');
+  assert(!remaining.includes(downstream), 'Temporary key cleanup failed');
   const current = await call(base + '/policy');
   if (JSON.stringify(current) === JSON.stringify(original)) {
     console.log('Policy write was not applied; original policy remains active.');

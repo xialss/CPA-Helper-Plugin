@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.4"
+var Version = "0.1.5"
 
 func compatiblePluginVersion(version string) bool {
 	// Host-managed feature settings do not change the v1 policy shape.
-	return version == Version || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
+	return version == Version || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.

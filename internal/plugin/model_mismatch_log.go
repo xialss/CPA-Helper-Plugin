@@ -77,8 +77,3 @@ func (a *App) logModelConfiguration(c modelMismatchConfig) {
 	a.verificationLog("info", "", fmt.Sprintf("[响应核验] 配置已生效 enabled=%t stream_enabled=%t action=%s unknown_action=%s ignored_models=%d accepted_models=%d",
 		c.Enabled, c.StreamEnabled, c.Action, c.UnknownAction, len(c.IgnoredModels), len(c.Accepted)))
 }
-
-func (a *App) logUnsupportedStream(id, model, format string) {
-	a.verificationLog("warn", id, fmt.Sprintf("[响应核验] 严格模式已在执行前拒绝非 Responses 流 result=blocked request_id=%q requested_model=%q actual_model=%q stream=true code=%q reason=%q source_format=%q action=reject unknown_action=pass",
-		id, model, "", "response_model_stream_unsupported", "non_responses_stream", format))
-}

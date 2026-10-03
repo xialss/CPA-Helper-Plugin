@@ -3,11 +3,47 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Version 0.1.4: response model verification
+## Current target: CPA v8.0.12
+
+Plugin 0.1.5 targets v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`),
+C ABI 1 / RPC schema 6. Host configuration and credential discovery use the v8
+management API. The directory exposes host-provided `auth_index` for diagnostics;
+policy references still hash the scheduler credential ID. v8.0.12 omits configured
+credentials from `/credentials` and does not expose indexes in scheduler hooks,
+so a pinned configuration-to-ID bridge remains necessary. Indexes are not unique
+across all configured credentials and must not be used to deduplicate them.
+There is no v0 host API fallback. Plugin-owned management/resource routes retain their v0 namespace,
+as required by CPA's dynamic plugin route registrar. No policy migration is needed.
+Rollback restores the previous plugin binary and a backup of CPA configuration
+if v8 writes migrated its layout. The `responses_only_stream` option and its
+protocol rejection gate are removed. Remove that field from existing CPA config
+before loading this build; unknown fields remain explicit configuration errors.
+Responses buffering defaults are 2 MiB per request and 8 MiB total. The UI uses
+MiB, while the API/YAML retain byte units. Other streaming protocols are verified
+per chunk and cannot retract already delivered content.
+Verified on 2026-10-03 with Go 1.26.4 and WinLibs UCRT GCC 16.2.0 on Windows
+amd64: `go fmt`, `go vet`, unit tests, race tests, and the real CPA v8.0.12
+dynamic-loading/management fixture passed. The official CPA binary checksum was
+verified against its release checksums. The directory tests and Edge browser smoke
+passed, including real credential-restricted routing, v8 configuration replacement,
+mapping deletion, sibling-setting preservation, MiB conversion and reload.
+Linux/Docker and external providers were not tested for this revision; the local
+Docker daemon was unavailable. No remote deployment was modified.
+
+Directory regression contracts: own header names such as `__proto__` participate
+in the scheduler-ID hash, including inherited group headers. OpenAI-compatible
+`keys: null` is read as a keyless list, retaining the group `auth_index`; malformed
+non-list values still fail sync. Real v8.0.12 browser tests verify null discovery
+and both allow/deny routing for a Claude credential with a `__proto__` header.
+Previously saved references generated without that header must be reselected and
+saved in the panel; the policy schema is unchanged. Rolling back this adapter
+reintroduces the incorrect reference and null-list failure.
+
+## Version 0.1.4: response model verification (historical v8.0.3 verification)
 
 Only the latest official CPA release is targeted; old adapters are not retained.
 Each build pins an exact release for reproducibility. Historical rows below are
-verification records, not a promise of support. The sole current target is
+verification records, not a promise of support. The target of this record was
 v8.0.3 (acdace93), C ABI 1 / host and plugin RPC schema 6. Registration rejects
 other schemas. The handshake does not expose the host release number, so this
 is not an exact host-version runtime check; cpa_version reports the build target.
@@ -134,7 +170,8 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 0.1.4 | v8.0.3 (`acdace936fa7df2905500c7f5e0a97d683138dea`) | C ABI 1 / host and plugin schema 6 | current target; verified on Linux amd64 | Configurable raw upstream response model verification and HTTP/SSE interception |
+| 0.1.5 | v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | v8 management, indexed credential directory with pinned scheduler-ID bridge, per-chunk non-Responses verification |
+| 0.1.4 | v8.0.3 (`acdace936fa7df2905500c7f5e0a97d683138dea`) | C ABI 1 / host and plugin schema 6 | historical; verified on Linux amd64 | Configurable raw upstream response model verification and HTTP/SSE interception |
 | 0.1.3 | v7.3.12 (`2eb8dd11`) | C ABI 1 / host and plugin schema 6 | historical verification record | Initial response model verification and HTTP/SSE interception |
 | 0.1.2 | v7.3.8 (`c93978c`) | C ABI 1 / host schema 6, plugin schema 4 | verified on Linux amd64 | Model-list filtering, host-managed toggle and Chinese policy errors; policy schema accepts 0.1.0–0.1.2 snapshots |
 | 0.1.0 | v7.2.143 (`4b5f1eab25fca4b3815369a826e958e7c070a69e`) | C ABI 1 / RPC schema 4 | verified on Linux and Windows amd64 | Go 1.26.0 minimum; CGO required |
@@ -154,7 +191,7 @@ cross-priority fallback. Usage observation and billing are not registered.
 
 The UI reuses the same-origin CPA panel's `cli-proxy-auth` / `managementKey`
 storage contract, including `enc::v1::` encoding. Credentials are rendered from
-official authenticated `/api-keys`, `/config`, and `/auth-files` management routes;
+official authenticated `/v8/management/config` and `/v8/management/credentials` routes;
 policy snapshots still contain only stable identifiers and user-entered notes.
 The deployed v7.3.7 panel storage format was checked against its served asset.
 The browser fixture covers automatic session reuse and credential display.

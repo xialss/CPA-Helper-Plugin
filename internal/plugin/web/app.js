@@ -70,14 +70,12 @@
     $("workspace").hidden = false;
     $("connection").textContent = "已连接"; $("connection").classList.add("ready"); render();
   }
-  function parseList(config, name) { const value = config[name] ?? []; if (!Array.isArray(value)) throw new Error(`CPA 目录格式错误: ${name}`); return value; }
   function renderVerification() {
     if (!verification) throw new Error("当前插件未提供响应核验配置");
     $("verify-enabled").checked = verification.enabled;
     $("verify-stream").checked = verification.stream_enabled;
-    $("verify-responses-only").checked = verification.responses_only_stream !== false;
-    $("verify-buffer").value = verification.max_buffer_bytes || 16777216;
-    $("verify-total-buffer").value = verification.max_total_buffer_bytes || 67108864;
+    $("verify-buffer").value = verification.max_buffer_bytes / (1024 * 1024);
+    $("verify-total-buffer").value = verification.max_total_buffer_bytes / (1024 * 1024);
     $("verify-action").value = verification.action;
     $("verify-unknown").value = verification.unknown_action;
     $("verify-case").checked = verification.case_sensitive;
@@ -96,8 +94,11 @@
       if (Object.hasOwn(accepted, name) || values.some(x => !x)) throw new Error("映射含重复请求模型或空响应模型");
       accepted[name] = values;
     }
-    return { enabled: $("verify-enabled").checked, stream_enabled: $("verify-stream").checked, responses_only_stream: $("verify-responses-only").checked,
-      max_buffer_bytes: Number($("verify-buffer").value), max_total_buffer_bytes: Number($("verify-total-buffer").value), action: $("verify-action").value,
+    const maxBuffer = Number($("verify-buffer").value), maxTotal = Number($("verify-total-buffer").value);
+    if (!Number.isInteger(maxBuffer) || maxBuffer < 1 || maxBuffer > 256) throw new Error("单请求暂存上限须为 1–256 MiB 的整数");
+    if (!Number.isInteger(maxTotal) || maxTotal < maxBuffer || maxTotal > 1024) throw new Error("并发暂存总上限须为整数，不小于单请求上限且不超过 1024 MiB");
+    return { enabled: $("verify-enabled").checked, stream_enabled: $("verify-stream").checked,
+      max_buffer_bytes: maxBuffer * 1024 * 1024, max_total_buffer_bytes: maxTotal * 1024 * 1024, action: $("verify-action").value,
       unknown_action: $("verify-unknown").value, case_sensitive: $("verify-case").checked, ignore_thinking_suffix: $("verify-thinking").checked,
       ignored_models: $("verify-ignored").value.split("\n").map(x => x.trim()).filter(Boolean), accepted_models: accepted };
   }
@@ -112,7 +113,7 @@
       $("verification-status").textContent = "正在校验并保存…";
       try {
         const next = await api(base + "/response-model/validate", { method: "POST", body: readVerification() });
-        await api("/v0/management/plugins/cpa-helper-plugin/config", { method: "PATCH", body: { response_model_mismatch: next } });
+        await api("/v8/management/config/plugins/configs/cpa-helper-plugin/response_model_mismatch", { method: "PUT", body: next });
         const deadline = Date.now() + 10000;
         for (;;) {
           const caps = await api(base + "/capabilities");
@@ -126,46 +127,13 @@
       }
     });
   };
-  function configuredCredentials(config) {
-    const out = [], counters = new Map();
-    const fingerprint = (kind, parts) => {
-      const idBase = kind + ":" + sha256(kind + parts.map(p => "\0" + String(p ?? "").trim()).join("")).slice(0, 12);
-      const count = counters.get(idBase) || 0; counters.set(idBase, count + 1);
-      return "sha256:" + sha256("cpa-key-billing:credential:v1\0" + idBase + (count ? "-" + count : ""));
-    };
-    const add = (kind, parts, provider, disabled, label) => { const ref = fingerprint(kind, parts); out.push({ ref, provider, source: "ai-providers", label, status: disabled ? "disabled" : "active" }); };
-    const fields = [["gemini-api-key", "gemini"], ["interactions-api-key", "gemini-interactions"], ["claude-api-key", "claude"], ["codex-api-key", "codex"], ["xai-api-key", "xai"], ["meta-api-key", "meta"]];
-    for (const [field, provider] of fields) for (const entry of parseList(config, field)) {
-      if (!entry["api-key"] && !entry["base-url"]) continue;
-      const sorted = Object.keys(entry.headers || {}).sort().map(k => k + "\0" + entry.headers[k] + "\0").join("");
-      add(provider + ":apikey", [entry["api-key"], entry["base-url"], entry["proxy-url"], entry.prefix, sorted], provider, entry.disabled || (entry.weight ?? 1) <= 0, [entry.name || provider, entry["base-url"], maskKey(entry["api-key"])].filter(Boolean).join(" · "));
-    }
-    for (const entry of parseList(config, "openai-compatibility")) {
-      if (entry.disabled) continue;
-      const name = (entry.name || "").trim().toLowerCase() || "openai-compatibility";
-      const provider = name === "openai-compatibility" || name.startsWith("openai-compatible-") ? name : "openai-compatible-" + name;
-      const entries = entry["api-key-entries"] || [];
-      if (!entries.length) add("openai-compatibility:" + name, [entry["base-url"]], provider, entry.disabled, [entry.name || provider, entry["base-url"]].filter(Boolean).join(" · "));
-      for (const item of entries) add("openai-compatibility:" + name, [item["api-key"], entry["base-url"], item["proxy-url"]], provider, entry.disabled || item.disabled || (item.weight ?? 1) <= 0, [entry.name || provider, entry["base-url"], maskKey(item["api-key"])].filter(Boolean).join(" · "));
-    }
-    for (const entry of parseList(config, "vertex-api-key")) {
-      if (!entry["api-key"] && !entry["base-url"]) continue;
-      add("vertex:apikey", [entry["api-key"], entry["base-url"], entry["proxy-url"]], "vertex", entry.disabled || (entry.weight ?? 1) <= 0, [entry.name || "vertex", entry["base-url"], maskKey(entry["api-key"])].filter(Boolean).join(" · "));
-    }
-    return out;
-  }
   async function syncDirectory() {
-    const [keyData, config, directory] = await Promise.all([api("/v0/management/api-keys"), api("/v0/management/config"), api("/v0/management/auth-files")]);
-    const rawKeys = keyData["api-keys"];
+    const [config, directory] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials")]);
+    const rawKeys = config.access?.["api-keys"] ?? [];
     if (!Array.isArray(rawKeys) || rawKeys.some(k => typeof k !== "string")) throw new Error("CPA API Key 目录格式错误");
+    const nextCredentials = cpaCredentialDirectory(config, directory);
     keys = rawKeys.filter(k => k.trim()).map(k => ({ id: sha256("cli-proxy-api:caller-scope:v1\0" + k.trim()), display: maskKey(k) }));
-    if (!Array.isArray(directory.files)) throw new Error("CPA 认证文件目录格式错误");
-    const inventory = new Map(directory.files.filter(f => f.id && !f.runtime_only && f.source !== "memory" && f.source !== "config" && !String(f.source || "").startsWith("config:")).map(f => {
-      const ref = "sha256:" + sha256("cpa-key-billing:credential:v1\0" + f.id.trim());
-      return [ref, { ref, source: "auth-files", provider: (f.provider || f.type || "").toLowerCase(), label: [f.name || f.id, f.label, f.email || f.account].filter(Boolean).join(" · "), status: f.disabled ? "disabled" : f.status }];
-    }));
-    for (const c of configuredCredentials(config)) inventory.set(c.ref, c);
-    credentials = [...inventory.values()];
+    credentials = nextCredentials;
     render();
     if (rawKeys.some(k => k.trim())) {
       const data = await api("/v1/models", { credential: rawKeys.find(k => k.trim()).trim() });

@@ -4,7 +4,7 @@ import "testing"
 
 func TestResponseModelComparison(t *testing.T) {
 	c := DefaultResponseModelConfig()
-	if !c.ResponsesOnlyStream || c.MaxBufferBytes != 16*1024*1024 || c.MaxTotalBufferBytes != 64*1024*1024 {
+	if c.MaxBufferBytes != 2*1024*1024 || c.MaxTotalBufferBytes != 8*1024*1024 {
 		t.Fatalf("unexpected response buffering defaults: %+v", c)
 	}
 	c.Accepted = map[string][]string{"alias": {"upstream"}}

@@ -26,7 +26,7 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 ## 构建与安装
 
-需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.3。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
+需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.12。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
@@ -75,9 +75,9 @@ Key 独立拒绝规则、分组名称及 ID，或未进入合并允许列表。�
 `model_list_filter_enabled` 设为 `false` 可关闭模型列表过滤，设为 `true`
 可重新启用；未设置时默认启用。保存后由 CPA 热更新，无需关闭整个插件。
 关闭只恢复 CPA 原始模型目录，实际生成的模型权限、凭据路由和并发限制继续生效。
-也可通过官方管理接口 `PATCH /v0/management/plugins/cpa-helper-plugin/config`
+也可通过官方管理接口 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin`
 提交 `{"model_list_filter_enabled":false}`；需要 CPA 管理密钥。
-插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.4 和目标 CPA v8.0.3。
+插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.5 和目标 CPA v8.0.12。
 
 ## 响应模型核验
 
@@ -92,7 +92,7 @@ HTTP 状态受宿主 ABI 限制通常仍为 200，已发生的上游调用和费
 Responses 流返回 Codex 可识别的终止错误分类，避免把核验拒绝当作临时故障自动重试；
 原始原因保留在 `verification_code` 和消息中，CPA 收到终止错误后取消该上游流。
 Responses 拦截模式先暂存全部文本和工具调用，成功终止并完成核验后才整体放行，防止结尾才声明错误模型时工具已执行；因此客户端会等待整次响应完成后再显示内容，内存占用随响应大小增长。
-严格流式模式默认只允许 Responses/Codex；Chat、Claude、Gemini 流式请求会在执行前拒绝，因为 CPA 插件 ABI 没有可靠的通用上游取消接口。
+Chat、Claude、Gemini 流式请求逐块核验，不因协议类型在执行前拒绝；已经发送的内容无法撤回。Responses 暂存上限在面板中以 MiB 配置，默认单请求 2 MiB、并发总计 8 MiB。
 同请求体并发、缺少模型或原始响应无法关联时按“无法核验”配置处理，不冒认一致。
 这只能检查上游声明，不能证明实际使用了该模型。详细边界和 YAML 示例见
 [`docs/response-model-mismatch.md`](docs/response-model-mismatch.md)。
