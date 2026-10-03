@@ -103,7 +103,7 @@ try {
   for (const nextMode of (leakBaseline ? [] : baseline ? ['mismatch'] : ['mismatch', 'late', 'unknown', 'native-late', 'changed'])) {
     mode = nextMode;
     settings.unknown_action = mode === 'unknown' ? 'reject' : 'pass';
-    const saved = await fetch(base + '/v0/management/plugins/cpa-helper-plugin/config', { method: 'PATCH', headers, body: JSON.stringify({ response_model_mismatch: settings }) });
+    const saved = await fetch(base + '/v8/management/config/plugins/configs/cpa-helper-plugin/response_model_mismatch', { method: 'PUT', headers, body: JSON.stringify(settings) });
     assert.equal(saved.status, 200);
     await waitFor(async () => (await (await fetch(capsURL, { headers })).json()).response_model_mismatch.unknown_action === settings.unknown_action, 'configuration activation');
     calls = 0; peak = 0; canceled = 0;

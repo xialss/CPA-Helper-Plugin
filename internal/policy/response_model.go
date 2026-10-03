@@ -10,7 +10,6 @@ import (
 type ResponseModelConfig struct {
 	Enabled              bool                `yaml:"enabled" json:"enabled"`
 	StreamEnabled        bool                `yaml:"stream_enabled" json:"stream_enabled"`
-	ResponsesOnlyStream  bool                `yaml:"responses_only_stream" json:"responses_only_stream"`
 	MaxBufferBytes       int                 `yaml:"max_buffer_bytes" json:"max_buffer_bytes"`
 	MaxTotalBufferBytes  int                 `yaml:"max_total_buffer_bytes" json:"max_total_buffer_bytes"`
 	Action               string              `yaml:"action" json:"action"`
@@ -23,7 +22,7 @@ type ResponseModelConfig struct {
 
 // DefaultResponseModelConfig disables verification until explicitly enabled.
 func DefaultResponseModelConfig() ResponseModelConfig {
-	return ResponseModelConfig{StreamEnabled: true, ResponsesOnlyStream: true, MaxBufferBytes: 16 * 1024 * 1024, MaxTotalBufferBytes: 64 * 1024 * 1024, Action: "reject", UnknownAction: "pass", IgnoreThinkingSuffix: true, IgnoredModels: []string{}, Accepted: map[string][]string{}}
+	return ResponseModelConfig{StreamEnabled: true, MaxBufferBytes: 2 * 1024 * 1024, MaxTotalBufferBytes: 8 * 1024 * 1024, Action: "reject", UnknownAction: "pass", IgnoreThinkingSuffix: true, IgnoredModels: []string{}, Accepted: map[string][]string{}}
 }
 
 // Validate runs before configuration activation.

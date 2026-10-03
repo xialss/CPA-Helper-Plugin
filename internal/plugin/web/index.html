@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPA Helper Plugin</title><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script defer src="lucide.js"></script><script defer src="sha256.js"></script><script defer src="app.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPA Helper Plugin</title><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script defer src="lucide.js"></script><script defer src="sha256.js"></script><script defer src="directory.js"></script><script defer src="app.js"></script></head>
 <body>
-<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span>PLUGIN / 0.1.4</span></div></div></header>
+<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span>PLUGIN / 0.1.5</span></div></div></header>
 <main>
 <div class="header-actions"><span id="connection" class="status">未连接</span><button id="refresh" class="icon" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button><a href="/management.html" target="_top">CPA 管理面板</a></div>
 <p id="message" role="status" aria-live="polite" hidden></p>
@@ -17,12 +17,11 @@
 <div><h2>上游响应模型核验</h2><p>比较客户端请求模型与上游声明的模型。发现不一致时拦截结果并提醒客户端；无法证明上游声明本身真实。</p></div>
 <label class="check"><input id="verify-enabled" type="checkbox">启用响应模型核验</label>
 <label class="check"><input id="verify-stream" type="checkbox">核验流式响应</label>
-<label class="check"><input id="verify-responses-only" type="checkbox">严格模式：流式仅允许 Responses（Codex）</label>
-<label>Responses 暂存上限（字节）<input id="verify-buffer" type="number" min="1048576" max="268435456" step="1048576"></label>
-<label>全部 Responses 暂存上限（字节）<input id="verify-total-buffer" type="number" min="1048576" max="1073741824" step="1048576"></label>
+<label>单请求暂存上限（MiB）<input id="verify-buffer" type="number" min="1" max="256" step="1" required></label>
+<label>并发暂存总上限（MiB）<input id="verify-total-buffer" type="number" min="1" max="1024" step="1" required></label>
 <label>发现模型不一致<select id="verify-action"><option value="reject">拦截结果并返回错误提醒</option><option value="audit">仅记录日志，保留原响应</option></select></label>
 <label>无法核验模型<select id="verify-unknown"><option value="pass">保留原响应并记录原因</option><option value="reject">拦截并提醒无法核验</option></select></label>
-<p>严格模式下，Chat、Claude、Gemini 等非 Responses 流式请求会在执行前拒绝，因为 CPA 插件接口无法可靠取消这些上游流。Responses 拦截模式在响应完成时判定。</p>
+<p>默认单请求 2 MiB、并发总计 8 MiB（1 MiB = 1024 × 1024 字节）。Responses 拦截模式完成核验后整体放行；其他流式协议逐块核验，不因协议类型拒绝请求。</p>
 <label class="check"><input id="verify-case" type="checkbox">区分模型名称大小写</label>
 <label class="check"><input id="verify-thinking" type="checkbox">比较时忽略思考强度后缀，例如 (high)</label>
 <label>跳过核验的请求模型（每行一个）<textarea id="verify-ignored" rows="3" placeholder="例如：auto"></textarea></label>

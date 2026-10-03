@@ -103,7 +103,7 @@ try {
   await waitReady();
   assert.deepEqual((await (await fetch(capsURL, { headers })).json()).response_model_mismatch, settings);
   assert.deepEqual(errors, []);
-  console.log('Response model UI passed: real CPA 8.0.3, save, validation, reload, restart persistence, HTTP error/header, desktop/mobile.');
+  console.log('Response model UI passed: real CPA, save, validation, reload, restart persistence, HTTP error/header, desktop/mobile.');
 } finally {
   if (browser) await browser.close();
   if (started) docker(['rm', '-f', name]);

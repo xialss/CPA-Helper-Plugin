@@ -33,7 +33,7 @@ confirmation before installing it.
 
 ## Install on another machine
 
-1. Use CPA v8.0.3 with dynamic plugins enabled.
+1. Use CPA v8.0.12 with dynamic plugins enabled.
 2. Add the registry URL above to `plugins.store-sources`, or enter it in CPAMC.
 3. Open the CPA/CPAMC plugin store and refresh it.
 4. Install **CPA Helper**. CPA downloads the matching platform archive from the
@@ -48,12 +48,12 @@ updates.
 
 ## Publish an update
 
-Push the semantic version tag `v0.1.4` to this repository. The release
+Push the semantic version tag `v0.1.5` to this repository. The release
 workflow builds Linux amd64 and Windows amd64 libraries and publishes these assets:
 
 ```text
-cpa-helper-plugin_0.1.4_linux_amd64.zip
-cpa-helper-plugin_0.1.4_windows_amd64.zip
+cpa-helper-plugin_0.1.5_linux_amd64.zip
+cpa-helper-plugin_0.1.5_windows_amd64.zip
 checksums.txt
 ```
 

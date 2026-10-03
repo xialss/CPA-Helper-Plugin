@@ -2,7 +2,7 @@
 
 ## 目标与实现状态
 
-当前版本为插件 0.1.4，唯一开发目标 CPA v8.0.3（C ABI 1 / RPC schema 6）。
+当前版本为插件 0.1.5，唯一开发目标 CPA v8.0.12（C ABI 1 / RPC schema 6）。
 仅比较客户端请求模型与上游响应声明的模型，不实现请求前模型不匹配拒绝。
 检测用于发现可观察的模型替换，不能证明上游填写的模型名真实，也不能撤销上游执行、费用或已发送的流内容。
 
@@ -12,7 +12,7 @@
 `response.normalize_before` 在 CPA 协议转换前读取原始响应的 `model`、`modelVersion`、`message.model`、`response.model`、`response.modelVersion` 或 `interaction.model`。
 不读取生成文本、工具结果或 usage 队列；不使用 CPA 路由模型冒充上游响应模型。
 
-CPA v8.0.3 的转换前钩子没有请求 ID，只提供原始请求体。因此插件使用仅驻留内存的请求体摘要关联唯一的在途请求：
+CPA v8.0.12 的转换前钩子没有请求 ID，只提供原始请求体。因此插件使用仅驻留内存的请求体摘要关联唯一的在途请求：
 相同原始请求体同时在途时，将整组标为无法关联，不把其中一个请求的模型当作另一个请求的结果。
 即使其中一个请求先完成，其余请求的歧义标记也不会解除。
 启用、关闭、跳过核验的请求都参与关联，避免配置切换造成错误归属。
@@ -33,7 +33,7 @@ CPA v8.0.3 的转换前钩子没有请求 ID，只提供原始请求体。因此
 - 缺少客户端模型、上游模型、原始响应或关联有歧义时，使用独立错误码 `response_model_unverifiable`，绝不误称为模型不匹配。关联歧义始终按不可核验处理，不受 `unknown_action=pass` 放行设置覆盖；`audit` 仍只记录不拦截。
 - Responses 流在 reject 模式下暂存全部文本和工具调用，直到成功终止事件完成核验才整体放行；即使开头匹配、结尾模型变化，也不会提前执行工具。不匹配立即丢弃暂存内容并返回终止错误。无法核验的配置在成功终止时判定。
   代价是客户端等待整次响应完成后才显示内容，内存占用随响应大小增长。上游失败仅返回失败事件；取消或缺少终止事件时丢弃暂存内容，由 CPA 保留连接错误语义。
-  审计模式不暂存。严格模式默认拒绝其他流式协议；关闭严格模式后它们仍逐块核验，无法撤回此前已发送的块。
+  审计模式不暂存。其他流式协议逐块核验，不因协议类型拒绝请求，无法撤回此前已发送的块。
 - 此版本验证 HTTP 非流式与 SSE。WebSocket 观察接口不能拦截输出，不承诺 WebSocket 拦截。
 
 ### Codex 自动重试修复
@@ -60,9 +60,8 @@ Responses 暂存修复进一步防止“最后才发现不匹配、工具已执�
 response_model_mismatch:
   enabled: false
   stream_enabled: true
-  responses_only_stream: true
-  max_buffer_bytes: 16777216
-  max_total_buffer_bytes: 67108864
+  max_buffer_bytes: 2097152
+  max_total_buffer_bytes: 8388608
   action: reject
   unknown_action: pass
   case_sensitive: false
@@ -75,9 +74,8 @@ response_model_mismatch:
 | --- | --- |
 | enabled | 总开关 |
 | stream_enabled | 是否核验流式请求 |
-| responses_only_stream | 严格模式下仅允许 Responses 流式协议；关闭后其他协议仍按逐块策略处理 |
-| max_buffer_bytes | Responses reject 模式的单请求暂存上限，范围 1 MiB–256 MiB |
-| max_total_buffer_bytes | 所有并发 Responses 请求的暂存总上限，不能小于单请求上限，最大 1 GiB |
+| max_buffer_bytes | API/YAML 使用字节；面板以 MiB 输入，默认 2 MiB，范围 1 MiB–256 MiB |
+| max_total_buffer_bytes | API/YAML 使用字节；面板以 MiB 输入，默认 8 MiB，不能小于单请求上限，最大 1024 MiB |
 | action | reject：拦截并提醒；audit：仅日志审计、原样转发 |
 | unknown_action | pass：保留一般无法核验的响应并记录原因；reject：拦截并提醒无法核验；关联歧义始终拦截；audit 模式总是原样转发 |
 | case_sensitive | 是否区分名称大小写 |
@@ -91,7 +89,7 @@ response_model_mismatch:
 
 配置由 CPA 管理，与插件策略快照分离。外部 CPA-Helper、SQLite、计费服务均不参与决定。
 移除新配置节点并恢复原动态库可回滚；CPA/插件需使用相互验证的发布版本。
-若已保存 0.1.4 版本的策略快照，降级时还需在 CPA 停止后恢复旧插件支持的策略备份。
+若已保存 0.1.5 版本的策略快照，降级时还需在 CPA 停止后恢复旧插件支持的策略备份。
 
 ## 验证
 

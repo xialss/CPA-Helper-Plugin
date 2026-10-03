@@ -237,7 +237,7 @@ openai-compatibility:
 	if status != 200 || !bytes.Contains(body, []byte("API Key")) {
 		t.Fatalf("UI: %d %s", status, body)
 	}
-	for _, asset := range []string{"app.js", "style.css", "lucide.js", "sha256.js", "logo.svg"} {
+	for _, asset := range []string{"app.js", "directory.js", "style.css", "lucide.js", "sha256.js", "logo.svg"} {
 		status, body = call("GET", plugin.ResourcePath+"/"+asset, "", nil, nil)
 		if status != 200 || len(body) == 0 {
 			t.Fatalf("asset %s: %d", asset, status)
@@ -248,13 +248,43 @@ openai-compatibility:
 	if err = json.Unmarshal(body, &p); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint := func(key string) string {
-		sum := sha256.Sum256([]byte("openai-compatibility:fixture\x00" + key + "\x00" + upstream.URL + "/v1\x00"))
-		id := "openai-compatibility:fixture:" + hex.EncodeToString(sum[:])[:12]
-		return policy.CredentialRef(id)
+	status, body = call("GET", "/v8/management/credentials", "fixture-management", nil, nil)
+	var directory struct {
+		Files []struct {
+			ID    string `json:"id"`
+			Index string `json:"auth_index"`
+		} `json:"files"`
+	}
+	if status != 200 || json.Unmarshal(body, &directory) != nil {
+		t.Fatalf("v8 credential directory: %d %s", status, body)
+	}
+	status, body = call("GET", "/v8/management/config/api-keys/openai-compatibility", "fixture-management", nil, nil)
+	var groups []struct {
+		Keys []struct {
+			Key   string `json:"api-key"`
+			Index string `json:"auth_index"`
+		} `json:"keys"`
+	}
+	if status != 200 || json.Unmarshal(body, &groups) != nil {
+		t.Fatalf("v8 configured credentials: %d %s", status, body)
+	}
+	refs := map[string]string{}
+	for _, group := range groups {
+		for _, key := range group.Keys {
+			if key.Index == "" {
+				t.Fatal("configured credential has no auth_index")
+			}
+			// v8.0.12 does not expose config credentials through /credentials.
+			// Pin the scheduler-ID bridge with actual credential subset routing.
+			sum := sha256.Sum256([]byte("openai-compatibility:fixture\x00" + key.Key + "\x00" + upstream.URL + "/v1\x00"))
+			refs[key.Key] = policy.CredentialRef("openai-compatibility:fixture:" + hex.EncodeToString(sum[:])[:12])
+		}
+	}
+	if refs["upstream-a"] == "" || refs["upstream-b"] == "" {
+		t.Fatal("fixture credential indexes missing")
 	}
 	p.Revision = 2
-	p.Keys = []policy.Key{{ID: policy.CallerScope("fixture-downstream"), Enabled: true, GroupIDs: []string{}, MaxConcurrency: 1, Rule: policy.Rule{Models: []string{"route-model"}, CredentialIDs: []string{fingerprint("upstream-a"), fingerprint("upstream-b")}}}}
+	p.Keys = []policy.Key{{ID: policy.CallerScope("fixture-downstream"), Enabled: true, GroupIDs: []string{}, MaxConcurrency: 1, Rule: policy.Rule{Models: []string{"route-model"}, CredentialIDs: []string{refs["upstream-a"], refs["upstream-b"]}}}}
 	put := func(p policy.Snapshot) {
 		t.Helper()
 		status, body := call("PUT", plugin.BasePath+"/policy", "fixture-management", p, map[string]string{"If-Match": fmt.Sprint(p.Revision - 1), "Idempotency-Key": fmt.Sprintf("policy-%d", p.Revision)})
@@ -328,7 +358,7 @@ openai-compatibility:
 	p.Keys[0].Enabled = true
 	put(p)
 	for _, enabled := range []bool{false, true} {
-		status, body = call("PATCH", "/v0/management/plugins/"+plugin.ID+"/config", "fixture-management", map[string]bool{"model_list_filter_enabled": enabled}, nil)
+		status, body = call("PATCH", "/v8/management/config/plugins/configs/"+plugin.ID, "fixture-management", map[string]bool{"model_list_filter_enabled": enabled}, nil)
 		if status != 200 {
 			t.Fatalf("toggle config: %d %s", status, body)
 		}
@@ -415,7 +445,7 @@ openai-compatibility:
 	// Response verification is post-execution, independent of route-model aliases.
 	applyVerification := func(cfg policy.ResponseModelConfig) {
 		t.Helper()
-		status, body := call("PATCH", "/v0/management/plugins/"+plugin.ID+"/config", "fixture-management", map[string]any{"response_model_mismatch": cfg}, nil)
+		status, body := call("PUT", "/v8/management/config/plugins/configs/"+plugin.ID+"/response_model_mismatch", "fixture-management", cfg, nil)
 		if status != 200 {
 			t.Fatalf("verification config: %d %s", status, body)
 		}
@@ -441,8 +471,6 @@ openai-compatibility:
 	}
 	verify := policy.DefaultResponseModelConfig()
 	verify.Enabled = true
-	// Exercise legacy protocol adapters explicitly; strict mode is covered below.
-	verify.ResponsesOnlyStream = false
 	applyVerification(verify)
 	mu.Lock()
 	responseModel = "watered-model"
@@ -455,24 +483,6 @@ openai-compatibility:
 		}
 		waitIdle(t, call)
 	}
-	verify.ResponsesOnlyStream = true
-	applyVerification(verify)
-	mu.Lock()
-	beforeStrictCalls := seen["Bearer upstream-a"] + seen["Bearer upstream-b"] + seen["Bearer upstream-forbidden"]
-	mu.Unlock()
-	status, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "messages": []map[string]string{{"role": "user", "content": "strict stream"}}}, nil)
-	if status != 400 || !bytes.Contains(body, []byte("response_model_stream_unsupported")) {
-		t.Fatalf("strict non-Responses stream was not rejected: %d %s", status, body)
-	}
-	waitIdle(t, call)
-	mu.Lock()
-	afterStrictCalls := seen["Bearer upstream-a"] + seen["Bearer upstream-b"] + seen["Bearer upstream-forbidden"]
-	mu.Unlock()
-	if afterStrictCalls != beforeStrictCalls {
-		t.Fatalf("strict non-Responses request reached upstream: before=%d after=%d", beforeStrictCalls, afterStrictCalls)
-	}
-	verify.ResponsesOnlyStream = false
-	applyVerification(verify)
 	// Cross-protocol conversion rewrites model metadata; raw observation must win.
 	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "verify responses"}, nil)
 	if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) {
@@ -517,7 +527,7 @@ openai-compatibility:
 	}
 	waitIdle(t, call)
 	applyVerification(policy.DefaultResponseModelConfig())
-	status, body = call("GET", "/v0/management/logs?limit=1000", "fixture-management", nil, nil)
+	status, body = call("GET", "/v8/management/observability/logs?limit=1000", "fixture-management", nil, nil)
 	var verificationLogs struct {
 		Lines []string `json:"lines"`
 	}

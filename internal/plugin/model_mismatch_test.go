@@ -16,9 +16,6 @@ func mismatchApp(t *testing.T) *App {
 	t.Helper()
 	a := configured(t)
 	a.modelMismatch.Enabled = true
-	// Legacy protocol unit tests exercise the pre-strict per-chunk adapter;
-	// strict Responses-only behavior has a dedicated test below.
-	a.modelMismatch.ResponsesOnlyStream = false
 	return a
 }
 func beginCheck(t *testing.T, a *App, id, body string, stream bool) {
@@ -112,27 +109,38 @@ func TestStreamMismatchLatchedAndConfigurationPinned(t *testing.T) {
 	a.completeModelMismatch("stream")
 }
 
-func TestStrictResponsesOnlyRejectsOtherStreamingProtocols(t *testing.T) {
+func TestVerificationAdmitsOtherStreamingProtocols(t *testing.T) {
 	a := mismatchApp(t)
-	a.modelMismatch.ResponsesOnlyStream = true
-	for i, format := range []string{"openai", ""} {
+	for _, format := range []string{"openai", "claude", "gemini", ""} {
 		env := invoke(t, a, pluginabi.MethodRequestInterceptBefore, pluginapi.RequestInterceptRequest{
-			RequestID: []string{"chat-stream", "unknown-stream"}[i], SourceFormat: format, Model: "client-model", RequestedModel: "client-model", Stream: true,
+			RequestID: "stream-" + format, SourceFormat: format, Model: "client-model", RequestedModel: "client-model", Stream: true,
 			Body: []byte("request"), Metadata: map[string]any{"caller_scope": policy.CallerScope("test-key"), "generate": true}})
 		var response pluginapi.RequestInterceptResponse
 		if err := json.Unmarshal(env.Result, &response); err != nil {
 			t.Fatal(err)
 		}
-		if !response.Terminate || response.StatusCode != 400 || !strings.Contains(string(response.ResponseBody), "response_model_stream_unsupported") {
-			t.Fatalf("strict stream format %q was not rejected: %+v", format, response)
+		if response.Terminate {
+			t.Fatalf("stream format %q was rejected before verification: %+v", format, response)
 		}
+		rawModel(t, a, "request", `{"model":"client-model"}`)
+		chunk := invoke(t, a, pluginabi.MethodResponseInterceptStreamChunk, pluginapi.StreamChunkInterceptRequest{
+			RequestID: "stream-" + format, SourceFormat: format, Body: []byte(`{"content":"matched"}`)})
+		var output pluginapi.StreamChunkInterceptResponse
+		if err := json.Unmarshal(chunk.Result, &output); err != nil {
+			t.Fatal(err)
+		}
+		if output.DropChunk || len(output.Body) != 0 {
+			t.Fatalf("matched stream format %q was not preserved: %+v", format, output)
+		}
+		a.runtime.Complete("stream-" + format)
+		a.completeModelMismatch("stream-" + format)
 	}
 	a.modelMismatch.StreamEnabled = false
 	resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, pluginapi.RequestInterceptRequest{
 		RequestID: "stream-disabled", SourceFormat: "openai", Model: "client-model", RequestedModel: "client-model", Stream: true,
 		Body: []byte("request"), Metadata: map[string]any{"caller_scope": policy.CallerScope("test-key"), "generate": true}}))
 	if resp.Terminate {
-		t.Fatalf("stream-disabled should bypass strict protocol gate: %+v", resp)
+		t.Fatalf("disabled stream verification should admit the request: %+v", resp)
 	}
 	a.runtime.Complete("stream-disabled")
 	a.modelMismatch.StreamEnabled = true
@@ -141,7 +149,7 @@ func TestStrictResponsesOnlyRejectsOtherStreamingProtocols(t *testing.T) {
 		RequestID: "ignored-stream", SourceFormat: "openai", Model: "client-model", RequestedModel: "client-model", Stream: true,
 		Body: []byte("request"), Metadata: map[string]any{"caller_scope": policy.CallerScope("test-key"), "generate": true}}))
 	if resp.Terminate {
-		t.Fatalf("ignored model should bypass strict protocol gate: %+v", resp)
+		t.Fatalf("ignored model should admit the request: %+v", resp)
 	}
 	a.runtime.Complete("ignored-stream")
 }

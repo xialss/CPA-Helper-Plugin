@@ -22,9 +22,9 @@ try {
   await frame.locator('#workspace').waitFor({ state: 'visible' });
   await frame.locator('#message').filter({ hasText: 'CPA 目录已同步' }).waitFor();
   assert.equal(await frame.locator('#management-key, #login-form, #add-category, #save, #rollback').count(), 0);
-  const response = await page.request.get(base + '/v0/management/api-keys', { headers: { Authorization: `Bearer ${key}` } });
+  const response = await page.request.get(base + '/v8/management/config/access/api-keys', { headers: { Authorization: `Bearer ${key}` } });
   assert.equal(response.status(), 200);
-  const rawKeys = (await response.json())['api-keys'];
+  const rawKeys = await response.json();
   const rendered = await frame.locator('#key-rows').textContent();
   assert(rawKeys.every(value => rendered.includes(mask(value)) && !rendered.includes(value)), 'Downstream masking failed');
   const layout = await frame.locator('.keys-table').evaluate(table => {
@@ -47,14 +47,14 @@ try {
   const activeBadge = frame.locator('.badge:not(.off)').first();
   if (await activeBadge.count()) assert.equal(await activeBadge.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(228, 241, 233)');
   await frame.locator('#key-rows button').first().click();
-  const configResponse = await page.request.get(base + '/v0/management/config', { headers: { Authorization: `Bearer ${key}` } });
+  const configResponse = await page.request.get(base + '/v8/management/config', { headers: { Authorization: `Bearer ${key}` } });
   assert.equal(configResponse.status(), 200);
   const config = await configResponse.json();
   const credentialText = await frame.locator('#credential-options').textContent();
-  const providers = (config['openai-compatibility'] || []).filter(p => !p.disabled);
+  const providers = (config['api-keys']?.['openai-compatibility'] || []).filter(p => !p.disabled);
   for (const provider of providers) {
     assert(credentialText.includes(provider.name), 'Provider name missing');
-    for (const entry of provider['api-key-entries'] || []) {
+    for (const entry of provider.keys || []) {
       const raw = entry['api-key'];
       if (raw) assert(credentialText.includes(mask(raw)) && !credentialText.includes(raw), 'Upstream masking failed');
     }

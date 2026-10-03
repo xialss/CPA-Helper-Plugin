@@ -26,7 +26,7 @@ import (
 const ID = "cpa-helper-plugin"
 
 // CPAVersion is the single release targeted by this build.
-const CPAVersion = "v8.0.3"
+const CPAVersion = "v8.0.12"
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"
@@ -226,12 +226,7 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 	if err != nil {
 		return denied(503, "policy_unavailable", "当前策略不可用，请联系管理员", req.SourceFormat)
 	}
-	verification := a.modelMismatchSettings()
 	model := requestedModel(req.Model, req.RequestedModel)
-	generation := true
-	if value, ok := req.Metadata["generate"].(bool); ok {
-		generation = value
-	}
 	k := e.Resolve(scope)
 	if !k.Enabled {
 		a.audit(scope, rev, "api_key_disabled")
@@ -240,10 +235,6 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 	if reason := e.ModelDenial(scope, model); reason != "" {
 		a.audit(scope, rev, "denied_model")
 		return denied(403, "model_forbidden", reason, req.SourceFormat)
-	}
-	if req.Stream && generation && verification.Enabled && verification.StreamEnabled && verification.Action == "reject" && verification.ResponsesOnlyStream && req.SourceFormat != "openai-response" && !verification.Ignores(model) {
-		a.logUnsupportedStream(req.RequestID, model, req.SourceFormat)
-		return denied(400, "response_model_stream_unsupported", "严格响应核验模式仅支持 Responses 流式协议", req.SourceFormat)
 	}
 	if generate, ok := req.Metadata["generate"].(bool); !ok || generate {
 		if !a.runtime.Admit(req.RequestID, k.MaxConcurrency) {
