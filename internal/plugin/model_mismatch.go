@@ -285,6 +285,11 @@ func (a *App) interceptStreamModel(req pluginapi.StreamChunkInterceptRequest) ([
 		return ok(pluginapi.StreamChunkInterceptResponse{})
 	}
 	if s.Alerted {
+		if format == "openai" {
+			if body := chatVerificationTerminal(req.Body, nil); body != nil {
+				return ok(pluginapi.StreamChunkInterceptResponse{Body: body})
+			}
+		}
 		return ok(pluginapi.StreamChunkInterceptResponse{DropChunk: true})
 	}
 	s.Alerted = true
@@ -292,6 +297,11 @@ func (a *App) interceptStreamModel(req pluginapi.StreamChunkInterceptRequest) ([
 		return ok(pluginapi.StreamChunkInterceptResponse{Body: responsesVerificationFailure(e)})
 	}
 	body := verificationBody(e, format)
+	if format == "openai" {
+		if terminal := chatVerificationTerminal(req.Body, e); terminal != nil {
+			body = terminal
+		}
+	}
 	// OpenAI Chat's HTTP handler adds SSE framing to JSON chunks. Other handlers
 	// consume already-framed SSE. Verify these shapes in the real CPA fixture.
 	if format != "openai" {
@@ -302,6 +312,41 @@ func (a *App) interceptStreamModel(req pluginapi.StreamChunkInterceptRequest) ([
 		body = []byte(prefix + string(body) + "\n\n")
 	}
 	return ok(pluginapi.StreamChunkInterceptResponse{Body: body})
+}
+
+// Preserve only real upstream termination metadata after rejection. CPA checks
+// delivered choices for finish_reason; dropping it falsely reports truncation.
+// Never copy content, tool calls, or usage from a rejected chunk.
+func chatVerificationTerminal(body []byte, rejection *modelCheckError) []byte {
+	type choice struct {
+		Index        int      `json:"index"`
+		Delta        struct{} `json:"delta"`
+		FinishReason string   `json:"finish_reason"`
+	}
+	var chunk struct {
+		Choices []choice `json:"choices"`
+	}
+	if json.Unmarshal(body, &chunk) != nil {
+		return nil
+	}
+	terminal := make([]choice, 0, len(chunk.Choices))
+	for _, c := range chunk.Choices {
+		if c.FinishReason != "" {
+			terminal = append(terminal, c)
+		}
+	}
+	if len(terminal) == 0 {
+		return nil
+	}
+	result := struct {
+		Choices []choice         `json:"choices"`
+		Error   *modelCheckError `json:"error,omitempty"`
+	}{terminal, rejection}
+	out, err := json.Marshal(result)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }
 
 // Codex retries unknown response.failed codes, regardless of retryable=false.

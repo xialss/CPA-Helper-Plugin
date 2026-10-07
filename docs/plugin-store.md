@@ -33,7 +33,7 @@ confirmation before installing it.
 
 ## Install on another machine
 
-1. Use CPA v8.0.12 with dynamic plugins enabled.
+1. Use CPA v8.0.17 with dynamic plugins enabled.
 2. Add the registry URL above to `plugins.store-sources`, or enter it in CPAMC.
 3. Open the CPA/CPAMC plugin store and refresh it.
 4. Install **CPA Helper**. CPA downloads the matching platform archive from the

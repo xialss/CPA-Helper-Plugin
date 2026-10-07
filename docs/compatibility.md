@@ -3,7 +3,32 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Current target: CPA v8.0.12
+## Current target: CPA v8.0.17
+
+Plugin 0.1.6 targets v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`),
+C ABI 1 / RPC schema 6, unchanged from v8.0.12.
+Chat rejection retains the explicit verification error and only real upstream
+finish reasons, with empty deltas. It never invents a successful terminal marker;
+genuinely truncated streams still receive the host truncation error. This avoids
+v8.0.15+'s false truncation when suppressed chunks contain the real finish reason.
+No policy/config migration is required; 0.1.5 snapshots remain accepted.
+Before downgrading, restore a policy backup accepted by the previous binary.
+Rollback restores the previous binary
+and reintroduces false truncation reporting. The ABI still cannot abort Chat
+execution; subsequent content remains suppressed until upstream completion.
+
+Verified on 2026-10-07 with Go 1.26.4 / Windows amd64 / UCRT GCC 16.2.0:
+formatting, vet, unit tests, race tests, official v8.0.17 dynamic-loading and
+management integration, and Edge UI smoke passed. The release archive checksum
+was checked before extraction. Regression cases cover real Chat finish reasons
+after rejection (including content on the terminal chunk), genuine truncation,
+Responses clean EOF without [DONE] versus truncated EOF, model detail visibility,
+and lifecycle accounting. Existing cancellation, restart, credential selection,
+null keyless lists and prototype-named header contracts also passed.
+Terminal HTTP flush failure injection, Linux/Docker and external providers were
+not tested. No deployed service was modified.
+
+## Version 0.1.5: historical v8.0.12 verification
 
 Plugin 0.1.5 targets v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`),
 C ABI 1 / RPC schema 6. Host configuration and credential discovery use the v8
@@ -170,6 +195,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.6 | v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Preserve real Chat termination after rejection; Responses EOF and model detail contracts |
 | 0.1.5 | v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | v8 management, indexed credential directory with pinned scheduler-ID bridge, per-chunk non-Responses verification |
 | 0.1.4 | v8.0.3 (`acdace936fa7df2905500c7f5e0a97d683138dea`) | C ABI 1 / host and plugin schema 6 | historical; verified on Linux amd64 | Configurable raw upstream response model verification and HTTP/SSE interception |
 | 0.1.3 | v7.3.12 (`2eb8dd11`) | C ABI 1 / host and plugin schema 6 | historical verification record | Initial response model verification and HTTP/SSE interception |

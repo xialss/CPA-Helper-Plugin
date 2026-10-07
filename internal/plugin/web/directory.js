@@ -1,4 +1,4 @@
-/* CPA v8.0.12 directory adapter; see docs/compatibility.md for the ID bridge. */
+/* CPA v8.0.17 directory adapter; see docs/compatibility.md for the ID bridge. */
 "use strict";
 function cpaCredentialDirectory(config, directory) {
   if (!directory || !Array.isArray(directory.files)) throw new Error("CPA 凭据目录格式错误");
