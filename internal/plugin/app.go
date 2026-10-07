@@ -26,7 +26,7 @@ import (
 const ID = "cpa-helper-plugin"
 
 // CPAVersion is the single release targeted by this build.
-const CPAVersion = "v8.0.12"
+const CPAVersion = "v8.0.17"
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"

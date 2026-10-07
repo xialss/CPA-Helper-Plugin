@@ -43,6 +43,7 @@ func TestCPACompatibility(t *testing.T) {
 	seen := map[string]int{}
 	responseModel := "upstream-model"
 	finiteStream := false
+	streamEnding := "done"
 	streamStarted := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -55,14 +56,20 @@ func TestCPACompatibility(t *testing.T) {
 		}
 		mu.Lock()
 		seen[r.Header.Get("Authorization")]++
-		actual, finite := responseModel, finiteStream
+		actual, finite, ending := responseModel, finiteStream, streamEnding
 		mu.Unlock()
 		if body.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprintf(w, "data: {\"id\":\"fixture\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n", actual)
 			w.(http.Flusher).Flush()
 			if finite {
-				fmt.Fprint(w, "data: {\"model\":\"route-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"later-secret\"}}]}\n\ndata: [DONE]\n\n")
+				fmt.Fprint(w, "data: {\"model\":\"route-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"later-secret\"}}]}\n\n")
+				if ending != "truncated" {
+					fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"terminal-secret\"},\"finish_reason\":\"stop\"}]}\n\n")
+				}
+				if ending == "done" {
+					fmt.Fprint(w, "data: [DONE]\n\n")
+				}
 				return
 			}
 			select {
@@ -302,6 +309,19 @@ openai-compatibility:
 	if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 1 || catalog.Data[0].ID != "route-model" {
 		t.Fatalf("filtered model catalog: %d %s", status, body)
 	}
+	for _, tc := range []struct {
+		model, key string
+		status     int
+	}{
+		{"route-model", "fixture-downstream", 200},
+		{"blocked-model", "fixture-downstream", 404},
+		{"blocked-model", "fixture-unconfigured", 200},
+	} {
+		status, body = call("GET", "/v1/models/"+tc.model, tc.key, nil, nil)
+		if status != tc.status {
+			t.Fatalf("model detail %s: %d %s", tc.model, status, body)
+		}
+	}
 	for _, header := range []string{"X-Api-Key", "X-Goog-Api-Key"} {
 		status, body = call("GET", "/v1/models", "", nil, map[string]string{header: "fixture-downstream"})
 		if status != 200 || json.Unmarshal(body, &catalog) != nil || len(catalog.Data) != 1 || catalog.Data[0].ID != "route-model" {
@@ -484,6 +504,20 @@ openai-compatibility:
 		waitIdle(t, call)
 	}
 	// Cross-protocol conversion rewrites model metadata; raw observation must win.
+	if bytes.Count(body, []byte(`"error":`)) != 1 || bytes.Contains(body, []byte("internal_server_error")) || bytes.Contains(body, []byte("terminal-secret")) || !bytes.Contains(body, []byte(`"finish_reason":"stop"`)) {
+		t.Fatalf("Chat rejection terminal sequence: %s", body)
+	}
+	mu.Lock()
+	streamEnding = "truncated"
+	mu.Unlock()
+	_, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "messages": []map[string]string{{"role": "user", "content": "truncated"}}}, nil)
+	if !bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("upstream stream closed")) || bytes.Contains(body, []byte("finish_reason\":\"stop")) {
+		t.Fatalf("real truncation hidden: %s", body)
+	}
+	waitIdle(t, call)
+	mu.Lock()
+	streamEnding = "done"
+	mu.Unlock()
 	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "verify responses"}, nil)
 	if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) {
 		t.Fatalf("translated mismatch: %d %s", status, body)
@@ -519,6 +553,29 @@ openai-compatibility:
 	verify.UnknownAction = "reject"
 	applyVerification(verify)
 	mu.Lock()
+	responseModel = "route-model"
+	mu.Unlock()
+	for _, ending := range []string{"eof", "truncated"} {
+		mu.Lock()
+		streamEnding = ending
+		mu.Unlock()
+		status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "input": "EOF contract"}, nil)
+		// Before any buffered output, CPA can still send an HTTP 502. If SSE
+		// headers were committed first, the same failure is an in-stream error.
+		if status != 200 && !(ending == "truncated" && status == 502) {
+			t.Fatalf("Responses %s: %d %s", ending, status, body)
+		}
+		if ending == "eof" {
+			if !bytes.Contains(body, []byte("response.completed")) || !bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte(`"error":{`)) {
+				t.Fatalf("clean EOF not completed: %s", body)
+			}
+		} else if bytes.Contains(body, []byte("response.completed")) || bytes.Contains(body, []byte("hello")) || !bytes.Contains(body, []byte("error")) {
+			t.Fatalf("truncated Responses released: %s", body)
+		}
+		waitIdle(t, call)
+	}
+	mu.Lock()
+	streamEnding = "done"
 	responseModel = ""
 	mu.Unlock()
 	status, body = chat("route-model", "fixture-downstream")

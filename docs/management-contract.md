@@ -15,7 +15,7 @@ Model-list filtering is controlled through CPA's official plugin configuration:
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, target CPA v8.0.12 and plugin version 0.1.5.
+reports its current value, target CPA v8.0.17 and plugin version 0.1.6.
 
 Response verification uses `PUT /v8/management/config/plugins/configs/cpa-helper-plugin/response_model_mismatch`
 with the complete verification object. This replaces cleared mappings while
@@ -60,7 +60,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.5",
+  "plugin_version": "0.1.6",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -69,9 +69,9 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.5` accepts snapshots produced by `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, and `0.1.4`;
+Plugin `0.1.6` accepts snapshots produced by `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, and `0.1.5`;
 all six producer versions are enumerated in the schema. The policy contract remains
-`v1`, and existing state does not require migration. A 0.1.5 snapshot can be rewritten
+`v1`, and existing state does not require migration. A 0.1.6 snapshot can be rewritten
 with an older producer version only when rolling the binary back to that version.
 The complete `PUT /policy` operation is the external administration interface for
 every control-panel setting. `groups[].id`, `groups[].name`, optional
@@ -120,7 +120,7 @@ API keys are masked to the first six and last four characters (keys of ten or
 fewer characters display `***`); original credential names remain readable.
 Credential labels expose the host-provided `auth_index`, including group-level
 indexes for keyless providers. Policy references hash the scheduler `id`.
-CPA v8.0.12 omits configured credentials from `/credentials`, so the pinned
+CPA v8.0.17 omits configured credentials from `/credentials`, so the pinned
 configuration-to-ID adapter remains necessary for these entries. File credentials
 use their actual host IDs. Missing indexes and duplicate runtime IDs fail sync;
 shared indexes do not collapse distinct scheduler credentials. Indexes are display

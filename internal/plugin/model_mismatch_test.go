@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -107,6 +108,45 @@ func TestStreamMismatchLatchedAndConfigurationPinned(t *testing.T) {
 		}
 	}
 	a.completeModelMismatch("stream")
+}
+
+func TestChatRejectionPreservesOnlyRealTermination(t *testing.T) {
+	for _, first := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, body string
+			terminal   bool
+		}{
+			{"finish with content", `{"choices":[{"index":2,"delta":{"content":"secret","tool_calls":[{"id":"secret"}]},"finish_reason":"stop"}],"usage":{"secret":1}}`, true},
+			{"multiple choices", `{"choices":[{"index":0,"delta":{"content":"secret"},"finish_reason":null},{"index":1,"delta":{},"finish_reason":"length"}]}`, true},
+			{"no finish", `{"choices":[{"index":0,"delta":{"content":"secret"},"finish_reason":null}]}`, false},
+			{"empty finish", `{"choices":[{"finish_reason":""}]}`, false},
+			{"malformed", `{"choices":`, false},
+		} {
+			t.Run(fmt.Sprintf("%s/first=%v", tc.name, first), func(t *testing.T) {
+				a := mismatchApp(t)
+				beginCheck(t, a, "terminal", "request", true)
+				rawModel(t, a, "request", `{"model":"wrong"}`)
+				a.modelMismatchStates["terminal"].Alerted = !first
+				env := invoke(t, a, pluginabi.MethodResponseInterceptStreamChunk, pluginapi.StreamChunkInterceptRequest{RequestID: "terminal", SourceFormat: "openai", Body: []byte(tc.body)})
+				var out pluginapi.StreamChunkInterceptResponse
+				if err := json.Unmarshal(env.Result, &out); err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(out.Body), "secret") || strings.Contains(string(out.Body), "usage") {
+					t.Fatalf("leaked payload: %s", out.Body)
+				}
+				if strings.Contains(string(out.Body), "finish_reason") != tc.terminal {
+					t.Fatalf("incorrect termination: %s", out.Body)
+				}
+				if strings.Contains(string(out.Body), "upstream_model_mismatch") != first {
+					t.Fatalf("incorrect error delivery: %s", out.Body)
+				}
+				if out.DropChunk != (!first && !tc.terminal) {
+					t.Fatalf("incorrect drop: %+v", out)
+				}
+			})
+		}
+	}
 }
 
 func TestVerificationAdmitsOtherStreamingProtocols(t *testing.T) {

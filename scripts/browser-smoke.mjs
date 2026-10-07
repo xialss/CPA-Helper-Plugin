@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binary = process.env.CPA_BINARY;
-if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.12');
+if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.17');
 const serve = process.argv.includes('--serve');
 const dir = await mkdtemp(path.join(tmpdir(), 'cpa-helper-ui-'));
 await mkdir(path.join(dir, 'plugins'));
