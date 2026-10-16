@@ -188,6 +188,53 @@ func TestCPAReconfigureAfterQuiesceRestoresAdmission(t *testing.T) {
 	invoke(t, a, pluginabi.MethodRequestComplete, pluginapi.RequestCompletion{RequestID: "after-completion"})
 }
 
+func TestCPAShutdownClearsRequestAccounting(t *testing.T) {
+	for _, method := range []string{pluginabi.MethodPluginShutdown, "abi_shutdown"} {
+		t.Run(method, func(t *testing.T) {
+			a := configured(t)
+			scope := policy.CallerScope("reload-key")
+			setPolicy(t, a, policy.Key{ID: scope, Enabled: true, GroupIDs: []string{}, MaxConcurrency: 1})
+			request := pluginapi.RequestInterceptRequest{RequestID: "before-unload", Metadata: map[string]any{"caller_scope": scope, "generate": true}}
+			if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.Terminate {
+				t.Fatal("initial request was rejected", resp)
+			}
+			if method == pluginabi.MethodPluginShutdown {
+				if env := invoke(t, a, method, struct{}{}); !env.OK {
+					t.Fatal(env.Error)
+				}
+			} else {
+				a.Shutdown()
+			}
+			if len(a.runtime.Counts()) != 0 {
+				t.Fatal("shutdown retained concurrency reservations")
+			}
+			request.RequestID = "while-unloaded"
+			if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.StatusCode != 503 {
+				t.Fatal("unloaded instance admitted a request", resp)
+			}
+			configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true, ModelListFilterEnabled: true, ResponseModelMismatch: defaultModelMismatchConfig()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env := invoke(t, a, pluginabi.MethodPluginRegister, lifecycle{SchemaVersion: pluginabi.SchemaVersion, ConfigYAML: configYAML}); !env.OK {
+				t.Fatal(env.Error)
+			}
+			request.RequestID = "after-reload"
+			if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.Terminate {
+				t.Fatal("reload retained the unloaded request's slot", resp)
+			}
+			invoke(t, a, pluginabi.MethodRequestComplete, pluginapi.RequestCompletion{RequestID: "before-unload"})
+			if a.runtime.Counts()[scope] != 1 {
+				t.Fatal("late completion changed the new request's reservation")
+			}
+			invoke(t, a, pluginabi.MethodRequestComplete, pluginapi.RequestCompletion{RequestID: "after-reload"})
+			if len(a.runtime.Counts()) != 0 {
+				t.Fatal("reloaded request did not release its slot")
+			}
+		})
+	}
+}
+
 func TestCPASchedulerContract(t *testing.T) {
 	a := configured(t)
 	scope := policy.CallerScope("k")

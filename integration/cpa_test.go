@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ func TestCPACompatibility(t *testing.T) {
 	finiteStream := false
 	streamEnding := "done"
 	streamStarted := make(chan struct{}, 1)
+	var streamRelease <-chan struct{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Model  string `json:"model"`
@@ -56,7 +58,7 @@ func TestCPACompatibility(t *testing.T) {
 		}
 		mu.Lock()
 		seen[r.Header.Get("Authorization")]++
-		actual, finite, ending := responseModel, finiteStream, streamEnding
+		actual, finite, ending, release := responseModel, finiteStream, streamEnding, streamRelease
 		mu.Unlock()
 		if body.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -76,7 +78,11 @@ func TestCPACompatibility(t *testing.T) {
 			case streamStarted <- struct{}{}:
 			default:
 			}
-			<-r.Context().Done()
+			select {
+			case <-release:
+				fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			case <-r.Context().Done():
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -249,6 +255,69 @@ openai-compatibility:
 		if status != 200 || len(body) == 0 {
 			t.Fatalf("asset %s: %d", asset, status)
 		}
+	}
+	type hostPlugin struct {
+		ID               string `json:"id"`
+		Registered       bool   `json:"registered"`
+		EffectiveEnabled bool   `json:"effective_enabled"`
+		ConfigFields     []struct {
+			Name    string          `json:"name"`
+			Type    string          `json:"type"`
+			Default json.RawMessage `json:"default"`
+		} `json:"config_fields"`
+	}
+	getPlugin := func() hostPlugin {
+		t.Helper()
+		code, data := call("GET", "/v8/management/plugins", "fixture-management", nil, nil)
+		var list struct {
+			Plugins []hostPlugin `json:"plugins"`
+		}
+		if code != 200 || json.Unmarshal(data, &list) != nil {
+			t.Fatalf("host plugin list: %d %s", code, data)
+		}
+		for _, item := range list.Plugins {
+			if item.ID == plugin.ID {
+				return item
+			}
+		}
+		t.Fatalf("host plugin list missing %s: %s", plugin.ID, data)
+		return hostPlugin{}
+	}
+	info := getPlugin()
+	if !info.Registered || !info.EffectiveEnabled || len(info.ConfigFields) != 3 {
+		t.Fatalf("host plugin registration: %+v", info)
+	}
+	status, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
+	var defaults struct {
+		Filter   bool                       `json:"model_list_filter_enabled"`
+		Response policy.ResponseModelConfig `json:"response_model_mismatch"`
+	}
+	if status != 200 || json.Unmarshal(body, &defaults) != nil {
+		t.Fatalf("default capabilities: %d %s", status, body)
+	}
+	// The host's serialized defaults must agree with the plugin's omitted settings.
+	wantDefaults, err := json.Marshal(map[string]any{
+		"state_dir":                 map[string]any{"type": "string", "default": filepath.Join("plugins", "cpa-helper-state")},
+		"model_list_filter_enabled": map[string]any{"type": "boolean", "default": defaults.Filter},
+		"response_model_mismatch":   map[string]any{"type": "object", "default": defaults.Response},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expectedDefaults map[string]any
+	if err = json.Unmarshal(wantDefaults, &expectedDefaults); err != nil {
+		t.Fatal(err)
+	}
+	actualDefaults := map[string]any{}
+	for _, field := range info.ConfigFields {
+		var value any
+		if err = json.Unmarshal(field.Default, &value); err != nil {
+			t.Fatalf("host config default %s: %v", field.Name, err)
+		}
+		actualDefaults[field.Name] = map[string]any{"type": field.Type, "default": value}
+	}
+	if !reflect.DeepEqual(actualDefaults, expectedDefaults) {
+		t.Fatalf("host config defaults: got %+v, want %+v", actualDefaults, expectedDefaults)
 	}
 	status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
 	var p policy.Snapshot
@@ -628,6 +697,101 @@ openai-compatibility:
 	if status != 200 {
 		t.Fatalf("rollback routing: %d %s", status, body)
 	}
+	waitIdle(t, call)
+	status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
+	var persistedPolicy policy.Snapshot
+	if status != 200 || json.Unmarshal(body, &persistedPolicy) != nil {
+		t.Fatalf("policy before unload: %d %s", status, body)
+	}
+	for _, path := range []string{"/v8/management/config/plugins/configs/" + plugin.ID, "/v8/management/config/plugins"} {
+		finish := make(chan struct{})
+		mu.Lock()
+		streamRelease = finish
+		mu.Unlock()
+		activeRequest, err := http.NewRequest("POST", base+"/v1/chat/completions", bytes.NewReader(streamBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		activeRequest.Header.Set("Authorization", "Bearer fixture-downstream")
+		activeRequest.Header.Set("Content-Type", "application/json")
+		activeResponse, err := client.Do(activeRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer activeResponse.Body.Close()
+		if activeResponse.StatusCode != 200 {
+			data, _ := io.ReadAll(activeResponse.Body)
+			t.Fatalf("stream before unload at %s: %d %s", path, activeResponse.StatusCode, data)
+		}
+		select {
+		case <-streamStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("stream before unload not started")
+		}
+		status, body = call("GET", plugin.BasePath+"/health", "fixture-management", nil, nil)
+		var active struct {
+			Counts map[string]int `json:"active"`
+		}
+		if status != 200 || json.Unmarshal(body, &active) != nil || active.Counts[policy.CallerScope("fixture-downstream")] != 1 {
+			t.Fatalf("unload fixture has no active reservation: %d %s", status, body)
+		}
+		for _, enabled := range []bool{false, true} {
+			status, body = call("PATCH", path, "fixture-management", map[string]bool{"enabled": enabled}, nil)
+			if status != 200 {
+				t.Fatalf("plugin enable=%t at %s: %d %s", enabled, path, status, body)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				info = getPlugin()
+				status, body = call("GET", plugin.BasePath+"/health", "fixture-management", nil, nil)
+				if info.Registered == enabled && info.EffectiveEnabled == enabled &&
+					(enabled && status == 200 && bytes.Contains(body, []byte(`"status":"ok"`)) || !enabled && status == 404) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("plugin enable=%t at %s not applied: %+v; health %d %s", enabled, path, info, status, body)
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if !enabled {
+				status, body = call("GET", plugin.ResourcePath+"/ui", "", nil, nil)
+				if status != 404 {
+					t.Fatalf("unloaded plugin resource: %d %s", status, body)
+				}
+				// CPA no longer sends completions to a detached plugin. Finish the
+				// admitted stream while detached, before the same DLL is reused.
+				close(finish)
+				data, readErr := io.ReadAll(activeResponse.Body)
+				closeErr := activeResponse.Body.Close()
+				if readErr != nil || closeErr != nil || !bytes.Contains(data, []byte("[DONE]")) {
+					t.Fatalf("stream while unloaded at %s: %v / %v; %s", path, readErr, closeErr, data)
+				}
+				continue
+			}
+			status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
+			var restored policy.Snapshot
+			if status != 200 || json.Unmarshal(body, &restored) != nil || !reflect.DeepEqual(restored, persistedPolicy) {
+				t.Fatalf("re-enabled plugin lost policy: %d %s", status, body)
+			}
+			status, body = chat("blocked-model", "fixture-downstream")
+			if status != 403 {
+				t.Fatalf("re-enabled plugin lost model denial: %d %s", status, body)
+			}
+			mu.Lock()
+			allowedBefore := seen["Bearer upstream-a"] + seen["Bearer upstream-b"]
+			forbiddenBefore := seen["Bearer upstream-forbidden"]
+			mu.Unlock()
+			status, body = chat("route-model", "fixture-downstream")
+			mu.Lock()
+			allowedDelta := seen["Bearer upstream-a"] + seen["Bearer upstream-b"] - allowedBefore
+			forbiddenDelta := seen["Bearer upstream-forbidden"] - forbiddenBefore
+			mu.Unlock()
+			if status != 200 || allowedDelta != 1 || forbiddenDelta != 0 {
+				t.Fatalf("re-enabled plugin routing: %d %s; allowed=%d forbidden=%d", status, body, allowedDelta, forbiddenDelta)
+			}
+			waitIdle(t, call)
+		}
+	}
 	stop()
 	stored, err := os.ReadFile(filepath.Join(dir, "state", "state.json"))
 	if err != nil {
@@ -638,7 +802,7 @@ openai-compatibility:
 			t.Fatal("state leaked credential")
 		}
 	}
-	t.Log("Configured CPA binary: dynamic load, management auth/resources, model-list filtering and authenticated visibility fallback, raw response model verification (Chat/Responses/Claude/Gemini), mappings and unknown rejection, alias policy, subset weights, streaming cancellation, concurrency, lifecycle cleanup, fail-closed routing, restart and rollback passed")
+	t.Log("Configured CPA binary: dynamic load, management auth/resources and config defaults, model-list filtering and authenticated visibility fallback, raw response model verification (Chat/Responses/Claude/Gemini), mappings and unknown rejection, alias policy, subset weights, streaming cancellation, concurrency, lifecycle cleanup, fail-closed routing, restart, rollback and policy recovery after per-plugin/global disable/re-enable passed")
 }
 
 func waitIdle(t *testing.T, call func(string, string, string, any, map[string]string) (int, []byte)) {

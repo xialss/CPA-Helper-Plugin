@@ -115,6 +115,38 @@ func TestResumeRetainsInFlightAccounting(t *testing.T) {
 	r.Complete("after")
 }
 
+func TestShutdownClearsStateBeforeResume(t *testing.T) {
+	r := New()
+	scope := policy.CallerScope("key")
+	if err := r.Begin("old", scope); err != nil || !r.Admit("old", 1) {
+		t.Fatal("initial admission failed", err)
+	}
+	r.End("old")
+	r.Pick(1, scope, "model", []Candidate{{ID: "a", Weight: 3}, {ID: "b", Weight: 1}})
+	r.Shutdown()
+	r.Shutdown()
+	if len(r.requests) != 0 || len(r.counts) != 0 || len(r.pools) != 0 || r.revision != 0 {
+		t.Fatal("shutdown retained instance-local state")
+	}
+	if err := r.Begin("disabled", scope); err == nil {
+		t.Fatal("shutdown admitted a new request")
+	}
+	r.Resume()
+	if err := r.Begin("new", scope); err != nil || !r.Admit("new", 1) {
+		t.Fatal("resume retained the unloaded request's slot", err)
+	}
+	r.End("new")
+	r.Complete("old")
+	r.End("old")
+	if r.Counts()[scope] != 1 {
+		t.Fatal("late callbacks changed the new request's reservation")
+	}
+	r.Complete("new")
+	if len(r.requests) != 0 || len(r.Counts()) != 0 {
+		t.Fatal("new request leaked a reservation")
+	}
+}
+
 func TestSubsetWeightsAndChanges(t *testing.T) {
 	r := New()
 	counts := map[string]int{}

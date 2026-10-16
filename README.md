@@ -26,7 +26,7 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 ## 构建与安装
 
-需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.17。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
+需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.29。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
@@ -51,6 +51,7 @@ plugins:
 ```
 
 重启 CPA 并访问 `/v0/resource/plugins/cpa-helper-plugin/ui` 或打开 CPA Helper 插件菜单。插件会复用同源 CPA 控制面板已保存的登录会话，并自动加载 CPA 目录；它没有独立的登录表单。
+CPA 重载配置时会卸载已禁用或未选中的插件。请在持久化配置中保留上述两处 `enabled: true`；仅把动态库留在目录中不会启用插件。重新启用后会加载原有策略状态。
 编辑 Key 或规则后，点击“保存”即可一次性应用所有更改。关闭编辑器不会自动保存。规则除名称外还支持可选备注。
 保存失败时更改内容仍会保持可见以便修正。并发数为 0 表示不设限制。已通过认证但未特别配置策略的 Key 默认允许访问；即使 CPA-Helper 离线，显式配置的规则依然保持生效。
 
@@ -77,7 +78,8 @@ Key 独立拒绝规则、分组名称及 ID，或未进入合并允许列表。�
 关闭只恢复 CPA 原始模型目录，实际生成的模型权限、凭据路由和并发限制继续生效。
 也可通过官方管理接口 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin`
 提交 `{"model_list_filter_enabled":false}`；需要 CPA 管理密钥。
-插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.6 和目标 CPA v8.0.17。
+插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.7 和目标 CPA v8.0.29。
+CPA 官方插件管理接口还会通过配置字段的 `default` 返回插件实际采用的默认值。
 
 ## 响应模型核验
 
