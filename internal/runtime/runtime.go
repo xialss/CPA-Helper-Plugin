@@ -134,6 +134,18 @@ func (r *Runtime) Counts() map[string]int {
 // Quiesce prevents new reservations while existing completion events drain.
 func (r *Runtime) Quiesce() { r.mu.Lock(); defer r.mu.Unlock(); r.closed = true }
 
+// Shutdown discards instance-local state after the host detaches completion hooks.
+// Quiesce retains that state because replacement rollback can resume the instance.
+func (r *Runtime) Shutdown() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	clear(r.requests)
+	clear(r.counts)
+	clear(r.pools)
+	r.revision = 0
+}
+
 // Resume restores admission after host replacement rollback without resetting
 // requests, concurrency counts, or scheduler state retained by the old instance.
 func (r *Runtime) Resume() { r.mu.Lock(); defer r.mu.Unlock(); r.closed = false }

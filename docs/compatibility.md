@@ -3,7 +3,48 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Current target: CPA v8.0.17
+## Current target: CPA v8.0.29
+
+Plugin 0.1.7 targets v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`),
+C ABI 1 / RPC schema 6, unchanged from v8.0.17. The pinned SDK adds
+`ConfigField.Default`; registration now describes the same defaults used when
+`state_dir`, `model_list_filter_enabled`, or `response_model_mismatch` is omitted.
+The host exposes these values through `/v8/management/plugins`. The new
+`UsageRecord.IsNativeKey` and `AccessProvider` fields do not affect this plugin,
+which does not register a usage callback.
+
+CPA commit `67465884` detaches disabled or unselected plugins when applying
+configuration, including every plugin when `plugins.enabled` is false. Keep both
+`plugins.enabled: true` and `plugins.configs.cpa-helper-plugin.enabled: true` in
+persisted configuration. A disabled plugin becomes unregistered and loses its
+management/resource routes; re-enabling it must reload the persisted policy.
+Final shutdown now clears request/concurrency and scheduler state: CPA no longer
+delivers completion events to a detached plugin, and Windows can reuse its DLL
+when it is re-enabled. Temporary quiesce still retains accounting for replacement
+rollback. The fixture finishes an admitted stream while disabled and checks that
+re-enabling restores admission, alongside configuration defaults across the
+dynamic registration and management API boundary.
+
+CPA's `server.max-request-body-bytes` limit can reject large policy/config writes
+with HTTP 413 before they reach the plugin. This host setting is independent of
+the plugin's Responses buffer limits.
+No policy/config migration is required; 0.1.6 snapshots remain accepted. Rollback
+restores the previous binary and a policy backup accepted by that binary. The
+configuration defaults are metadata only and require no rollback edits.
+
+Verified on 2026-10-16 with Go 1.26.4 / Windows amd64 / UCRT GCC 16.2.0:
+formatting, vet, unit tests, race tests, a newly built dynamic library against the
+official v8.0.29 binary, management integration, directory tests and Edge browser
+smoke passed. The official archive checksum was checked before use. The fixture
+verified configuration defaults and per-plugin/global disable/re-enable recovery,
+alongside the existing response, routing, cancellation, restart and rollback
+contracts. Race linking required a compiler directory without spaces; GCC expands
+8.3 aliases back to a path containing spaces. Linux/Docker verification was not
+run because the local Docker daemon was unavailable. External providers and
+terminal HTTP flush failure injection were not tested. No deployed service was
+modified. The v8.0.17 record below is historical.
+
+## Version 0.1.6: historical v8.0.17 verification
 
 Plugin 0.1.6 targets v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`),
 C ABI 1 / RPC schema 6, unchanged from v8.0.12.
@@ -195,6 +236,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.7 | v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Configuration defaults and disable/re-enable lifecycle contracts |
 | 0.1.6 | v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Preserve real Chat termination after rejection; Responses EOF and model detail contracts |
 | 0.1.5 | v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | v8 management, indexed credential directory with pinned scheduler-ID bridge, per-chunk non-Responses verification |
 | 0.1.4 | v8.0.3 (`acdace936fa7df2905500c7f5e0a97d683138dea`) | C ABI 1 / host and plugin schema 6 | historical; verified on Linux amd64 | Configurable raw upstream response model verification and HTTP/SSE interception |

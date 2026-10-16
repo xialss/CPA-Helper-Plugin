@@ -26,7 +26,7 @@ import (
 const ID = "cpa-helper-plugin"
 
 // CPAVersion is the single release targeted by this build.
-const CPAVersion = "v8.0.17"
+const CPAVersion = "v8.0.29"
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"
@@ -120,7 +120,19 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		a.runtime.Resume()
 		a.mu.Unlock()
 		a.logModelConfiguration(cfg.ResponseModelMismatch)
-		return ok(registration{pluginabi.SchemaVersion, pluginapi.Metadata{Name: ID, Version: policy.Version, Author: "CPA-Helper", GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg", ConfigFields: []pluginapi.ConfigField{{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Dedicated persistent policy directory; parent must exist."}, {Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"}, {Name: "response_model_mismatch", Type: pluginapi.ConfigFieldTypeObject, Description: "上游响应模型不匹配检测；默认关闭。"}}}, map[string]bool{"request_interceptor": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true}})
+		return ok(registration{
+			SchemaVersion: pluginabi.SchemaVersion,
+			Metadata: pluginapi.Metadata{
+				Name: ID, Version: policy.Version, Author: "CPA-Helper",
+				GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg",
+				ConfigFields: []pluginapi.ConfigField{
+					{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Default: filepath.Join("plugins", "cpa-helper-state"), Description: "Dedicated persistent policy directory; parent must exist."},
+					{Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Default: true, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"},
+					{Name: "response_model_mismatch", Type: pluginapi.ConfigFieldTypeObject, Default: defaultModelMismatchConfig(), Description: "上游响应模型不匹配检测；默认关闭。"},
+				},
+			},
+			Capabilities: map[string]bool{"request_interceptor": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true},
+		})
 	case pluginabi.MethodResponseNormalizeBefore:
 		var req pluginapi.ResponseTransformRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -176,17 +188,20 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			return nil, errors.New("invalid management payload")
 		}
 		return a.management(req)
-	case pluginabi.MethodPluginQuiesce, pluginabi.MethodPluginShutdown:
+	case pluginabi.MethodPluginQuiesce:
 		a.runtime.Quiesce()
 		a.clearModelMismatchStates()
+		return ok(struct{}{})
+	case pluginabi.MethodPluginShutdown:
+		a.Shutdown()
 		return ok(struct{}{})
 	default:
 		return ErrorEnvelope("unknown_method", "unsupported plugin method", http.StatusNotFound)
 	}
 }
 
-// Shutdown prevents admission after the host begins unloading the instance.
-func (a *App) Shutdown() { a.runtime.Quiesce(); a.clearModelMismatchStates() }
+// Shutdown clears transient state after the host detaches the instance.
+func (a *App) Shutdown() { a.runtime.Shutdown(); a.clearModelMismatchStates() }
 func (a *App) modelListFiltering() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

@@ -20,7 +20,7 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a fixture pinned to the single current CPA release (v8.0.17). It should
+Keep a fixture pinned to the single current CPA release (v8.0.29). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. V1 does not
 register a usage callback.
@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v8.0.17 binary for the target platform.
+Download the official plugin-enabled CPA v8.0.29 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v8.0.17\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.29\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -60,7 +60,7 @@ real credentials. It checks management authentication, static resources, aliases
 rollback. The test stops its CPA process and removes temporary state at completion.
 CPA itself can still perform its own background version checks.
 
-The v8.0.17 regression fixture verifies model detail filtering (allowed 200,
+The v8.0.29 regression fixture verifies model detail filtering (allowed 200,
 hidden 404, unrestricted caller 200), Chat rejection with one explicit error and
 sanitized real finish reasons, and continued error reporting on true truncation.
 Unit fixtures cover rejection on the terminal chunk itself, multiple choices,
@@ -70,7 +70,7 @@ content with response.completed) from truncated EOF (error, no buffered content)
 Both paths must release request accounting; client cancellation is also covered.
 Terminal HTTP flush failures are not injected by this fixture.
 
-The v8.0.17 fixture also checks that `/v1/models` contains only the permitted
+The v8.0.29 fixture also checks that `/v1/models` contains only the permitted
 alias for the restricted caller. Unit contract fixtures cover OpenAI, Claude
 cloaking/pagination IDs, Gemini, Codex, group denial precedence, disabled and
 unconfigured keys, missing/ambiguous headers, malformed catalogs and policy
@@ -83,6 +83,17 @@ waits for CPA's asynchronous reconfiguration through `/capabilities`, checks
 version metadata and the resulting catalog, and verifies generation stays denied.
 The fixture installs `CPA_PLUGIN_BINARY` under the canonical plugin filename,
 so a build artifact may have a trial suffix without changing its host plugin ID.
+
+The v8.0.29 fixture checks `GET /v8/management/plugins` configuration field
+types/defaults against the plugin's omitted settings. It also disables and
+re-enables both the individual plugin and the global plugin system through the
+v8 config API. Disabled instances must become unregistered and lose their
+management/resource routes; re-enabled instances must recover the identical
+persisted policy, model denial, credential subset routing and request accounting.
+For both disable paths, an admitted stream ends while the plugin is detached;
+re-enabling must admit a new request without a stale concurrency reservation.
+Unit tests distinguish final RPC/ABI shutdown cleanup from temporary quiesce,
+which must retain in-flight accounting for replacement rollback.
 
 ## Browser verification and preview
 
@@ -108,7 +119,7 @@ frames are tested at the CPA translator callback boundary; the plugin
 does not infer missing boundaries from arbitrary byte fragments.
 
 Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
-Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.17
+Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.29
 Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
 `cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
 The script creates its own temporary config, synthetic keys, mock upstream and
@@ -125,7 +136,7 @@ transactional reconfiguration. Ordinary upstream traffic is not used.
 
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v8.0.17\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.29\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```
@@ -133,7 +144,7 @@ npm run preview
 `npm run test:directory` checks v8 grouped credentials, host `auth_index`, shared
 indexes, duplicate keys, group inheritance, keyless providers, file credentials,
 invalid indexes and secret masking. The real CPA fixture verifies the configured
-credential ID bridge with actual subset routing; v8.0.17's file directory omits
+credential ID bridge with actual subset routing; v8.0.29's file directory omits
 configured credentials and scheduler hooks do not expose their indexes.
 The browser fixture rejects deprecated host API calls and verifies v8 config
 PUT, mapping deletion, preservation of sibling settings, MiB-to-byte conversion and reload.
@@ -142,7 +153,7 @@ It also loads a legacy `api-key-entries: null` keyless group, asserts the real v
 A Claude credential with an own `__proto__` header is selected using the browser's
 directory adapter: allow must reach the mock upstream, deny must return a 503
 routing error without reaching it. After asserting successful null-list discovery,
-the fixture normalizes its list to `[]`: CPA v8.0.17 reads legacy null lists but
+the fixture normalizes its list to `[]`: CPA v8.0.29 reads legacy null lists but
 rejects them when validating v8 configuration writes. Directory unit tests additionally
 cover inherited and per-key prototype-named headers for Claude/Codex and reject
 malformed credential lists other than the supported keyless null value.
@@ -178,4 +189,7 @@ advance. Do not run during concurrent management edits. See
 Windows builds require a current MinGW-w64 UCRT toolchain. The old local MinGW 8.1
 produced an unloadable DLL and race executables with missing entry points; compile
 success alone was insufficient. Point `CC` and the process-local PATH at UCRT GCC.
+Keep the entire compiler directory in a path without spaces: WinLibs GCC 16.2.0
+expands 8.3 aliases before passing its manifest-object path to the linker, so a
+short alias alone does not fix race-test linking from a directory with spaces.
 The Linux artifact built on Debian bookworm targets glibc systems, not musl/Alpine.
