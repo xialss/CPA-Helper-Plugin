@@ -25,7 +25,7 @@ type managementRequest struct {
 
 func managementRegistration() any {
 	routes := []pluginapi.ManagementRoute{}
-	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"POST", "/response-model/validate"}} {
+	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"GET", "/model-catalog"}, {"PUT", "/model-catalog"}, {"POST", "/response-model/validate"}} {
 		routes = append(routes, pluginapi.ManagementRoute{Method: r[0], Path: BasePath + r[1]})
 	}
 	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}, {Path: "/directory.js"}}
@@ -146,9 +146,12 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		}
 		jsonResponse(w, status, struct {
 			snapshot.Health
-			Active           map[string]int `json:"active"`
-			ResponseTracking int            `json:"response_model_tracked_requests"`
-		}{h, a.runtime.Counts(), a.modelMismatchActive()})
+			Active           map[string]int         `json:"active"`
+			ResponseTracking int                    `json:"response_model_tracked_requests"`
+			ModelCatalog     snapshot.CatalogHealth `json:"model_catalog"`
+		}{h, a.runtime.Counts(), a.modelMismatchActive(), a.currentCatalogStore().Health()})
+	case "GET /model-catalog", "PUT /model-catalog":
+		a.serveModelCatalog(w, r)
 	case "GET /policy":
 		p, err := s.Current()
 		if err != nil {

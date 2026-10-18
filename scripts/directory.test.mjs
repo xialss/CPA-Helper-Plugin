@@ -96,3 +96,41 @@ test('keyless null lists follow the v8 management contract without accepting mal
   }
   assert.throws(() => directory({ 'api-keys': { codex: [{ keys: null }] } }, []), /CPA/);
 });
+
+test('model catalog queries actual auth IDs and persists only public IDs and routing attributes', async () => {
+  const credentials = directory({ 'api-keys': { 'openai-compatibility': [
+    { name: 'catalog', 'base-url': 'https://catalog.invalid', keys: [{ 'api-key': 'private-upstream-secret', auth_index: 'config-index' }] },
+  ] } }, [{ id: 'oauth-fixture.json', auth_index: 'file-index', provider: 'codex', source: 'file', weight: 0 }]);
+  const queried = [];
+  const result = await context.cpaModelCatalog(credentials, { contract_version: 'v1', plugin_version: '0.1.8', cpa_version: 'v8.0.32', catalog_revision: 1 }, async id => {
+    queried.push(id);
+    return { models: [{ id: 'team/public-alias', owned_by: 'unrelated-provider' }, { id: 'shared' }] };
+  });
+  assert.deepEqual(queried, credentials.map(c => c.auth_id));
+  assert(!queried.includes('config-index') && !queried.includes('file-index'));
+  const stored = JSON.parse(JSON.stringify(result));
+  assert.equal(stored.credentials.find(c => c.source === 'auth-files').enabled, false);
+  assert.deepEqual(stored.credentials[0].models, ['shared', 'team/public-alias']);
+  assert.doesNotMatch(JSON.stringify(stored), /private-upstream-secret|auth_id|auth_index|oauth-fixture.json|owned_by|label/);
+});
+
+test('failed and malformed model queries reject the complete synchronization', async () => {
+  const credentials = directory({}, [{ id: 'oauth.json', auth_index: 'idx', provider: 'claude', source: 'file' }]);
+  for (const result of [{}, { models: null }, { models: [{}] }, { models: [{ id: 'bad\nmodel' }] }]) {
+    await assert.rejects(context.cpaModelCatalog(credentials, {}, async () => result), /CPA/);
+  }
+  await assert.rejects(context.cpaModelCatalog(credentials, {}, async () => { throw new Error('host unavailable'); }), /host unavailable/);
+});
+
+test('directory identity ignores ordering and transient errors but detects routing changes', () => {
+  const credentials = directory({}, [
+    { id: 'a.json', auth_index: 'a', provider: 'codex', source: 'file', status: 'active' },
+    { id: 'b.json', auth_index: 'b', provider: 'claude', source: 'file', status: 'error' },
+  ]);
+  const identity = context.cpaDirectoryIdentity(credentials);
+  const changed = structuredClone(credentials).reverse();
+  changed[0].status = 'active';
+  assert.equal(context.cpaDirectoryIdentity(changed), identity);
+  changed[0].status = 'disabled';
+  assert.notEqual(context.cpaDirectoryIdentity(changed), identity);
+});

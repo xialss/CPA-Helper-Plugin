@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"cpa-helper-plugin/internal/catalog"
 	"cpa-helper-plugin/internal/policy"
 	run "cpa-helper-plugin/internal/runtime"
 	"cpa-helper-plugin/internal/snapshot"
@@ -26,7 +27,7 @@ import (
 const ID = "cpa-helper-plugin"
 
 // CPAVersion is the single release targeted by this build.
-const CPAVersion = "v8.0.29"
+const CPAVersion = catalog.CPAVersion
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"
@@ -43,6 +44,7 @@ type App struct {
 	modelListFilterEnabled bool
 	modelMismatch          modelMismatchConfig
 	store                  *snapshot.Store
+	catalog                *snapshot.CatalogStore
 	stateDir               string
 	runtime                *run.Runtime
 	host                   HostCall
@@ -113,6 +115,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		}
 		if a.store == nil {
 			a.store = snapshot.Open(dir)
+			a.catalog = snapshot.OpenCatalog(dir)
 			a.stateDir = dir
 		}
 		a.modelListFilterEnabled = cfg.ModelListFilterEnabled
@@ -207,7 +210,12 @@ func (a *App) modelListFiltering() bool {
 	defer a.mu.RUnlock()
 	return a.modelListFilterEnabled
 }
-func (a *App) currentStore() *snapshot.Store   { a.mu.RLock(); defer a.mu.RUnlock(); return a.store }
+func (a *App) currentStore() *snapshot.Store { a.mu.RLock(); defer a.mu.RUnlock(); return a.store }
+func (a *App) currentCatalogStore() *snapshot.CatalogStore {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.catalog
+}
 func text(m map[string]any, key string) string { s, _ := m[key].(string); return strings.TrimSpace(s) }
 func internalRequest(m map[string]any) bool    { return text(m, "source") == "plugin_host_model_callback" }
 func requestedModel(model, requested string) string {

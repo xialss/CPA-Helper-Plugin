@@ -15,7 +15,7 @@ Model-list filtering is controlled through CPA's official plugin configuration:
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, target CPA v8.0.29 and plugin version 0.1.7.
+reports its current value, target CPA v8.0.32 and plugin version 0.1.8.
 `GET /v8/management/plugins` exposes each configuration field's `default`,
 including the default state directory, enabled model-list filtering, and the
 complete disabled-by-default response-verification settings.
@@ -44,6 +44,8 @@ not open an additional listener or accept downstream API keys for administration
 | `POST` | `/policy/rollback` | activate a retained revision |
 | `GET` | `/capabilities` | supported modules, contract and ABI versions |
 | `GET` | `/directory` | host credential inventory plus observed configured credentials, with fingerprints only |
+| `GET` | `/model-catalog` | saved model associations and health; ETag is the independent catalog revision |
+| `PUT` | `/model-catalog` | validate and atomically persist a complete model directory |
 | `POST` | `/response-model/validate` | validate response-verification settings without saving |
 
 Mutations require `If-Match: "<current revision>"` and `Idempotency-Key`.
@@ -63,7 +65,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.7",
+  "plugin_version": "0.1.8",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -72,9 +74,9 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.7` accepts snapshots produced by `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5`, and `0.1.6`;
-all eight supported producer versions are enumerated in the schema. The policy contract remains
-`v1`, and existing state does not require migration. A 0.1.7 snapshot can be rewritten
+Plugin `0.1.8` accepts snapshots produced by `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5`, `0.1.6`, and `0.1.7`;
+all nine supported producer versions are enumerated in the schema. The policy contract remains
+`v1`, and existing state does not require migration. A 0.1.8 snapshot can be rewritten
 with an older producer version only when rolling the binary back to that version.
 The complete `PUT /policy` operation is the external administration interface for
 every control-panel setting. `groups[].id`, `groups[].name`, optional
@@ -117,13 +119,17 @@ disabled), its current panel does not expose an in-memory session bridge; return
 to CPA to establish a saved session. Missing sessions produce an explicit error.
 Use HTTPS when accessing CPA over a network. No external CDN is needed at runtime.
 The UI reads CPA `/v8/management/config` (downstream keys at `access.api-keys`,
-upstream groups at `api-keys`), `/v8/management/credentials`, and `/v1/models`
-(the latter with a downstream key). CPA owns all key lifecycle operations.
+upstream groups at `api-keys`), `/v8/management/credentials`, and each credential's
+`/v8/management/credentials/models?name=<authID>`. It uses the existing ID bridge
+for configured credentials, and actual IDs for file credentials. `auth_index`
+is not the model-query parameter. Model selections come from this full registered
+directory, independently of the administrator's downstream key restrictions.
+CPA owns all key lifecycle operations.
 API keys are masked to the first six and last four characters (keys of ten or
 fewer characters display `***`); original credential names remain readable.
 Credential labels expose the host-provided `auth_index`, including group-level
 indexes for keyless providers. Policy references hash the scheduler `id`.
-CPA v8.0.29 omits configured credentials from `/credentials`, so the pinned
+CPA v8.0.32 omits configured credentials from `/credentials`, so the pinned
 configuration-to-ID adapter remains necessary for these entries. File credentials
 use their actual host IDs. Missing indexes and duplicate runtime IDs fail sync;
 shared indexes do not collapse distinct scheduler credentials. Indexes are display
@@ -148,6 +154,54 @@ intentionally absent from the lightweight control-panel workflow.
   unless the returned revision matches the requested revision.
 - The plugin must not call back into an administrator on the request hot path.
 
+## Credential model catalog
+
+`GET /model-catalog` returns `{"snapshot": <document or null>, "health": {...}}`.
+It returns 200 even before synchronization so a manager can bootstrap the
+directory; `health.status` is `unavailable` and the initial ETag is `"0"`.
+`PUT /model-catalog` uses this independent revision as `If-Match`, a unique
+`Idempotency-Key`, and the complete next-revision document:
+
+```json
+{
+  "contract_version": "v1",
+  "plugin_version": "0.1.8",
+  "cpa_version": "v8.0.32",
+  "catalog_revision": 1,
+  "generated_at": "2026-10-17T00:00:00Z",
+  "credentials": []
+}
+```
+
+Each credential contains `ref` (the existing fingerprint), `source`, lowercase
+`provider`, boolean `enabled`, and a non-null `models` array of registered public
+IDs. See `model-catalog.schema.json`. No keys, auth IDs, indexes, labels, or
+account data are accepted. Empty complete directories are valid; duplicate refs,
+duplicate model IDs (case-insensitive), unknown fields and malformed entries
+reject the whole transaction. Success returns `{"catalog_revision": <revision>}`.
+Revision conflicts and persistence failures have the same 409/500 semantics as
+policy transactions. Unreadable/corrupt catalog state returns 503 on writes and
+requires backup recovery while CPA is stopped. Uncertain durability also removes
+the active catalog until restart reconciles disk state.
+
+`/health.model_catalog` reports availability, revision, generated/accepted times,
+age, credential count and last rejection. It is independent of policy health:
+model-only policies and unrestricted callers do not need credential associations.
+There is no automatic expiry; management outages retain the last accepted catalog.
+The panel synchronizes on opening and on its sync button. It rechecks CPA config
+and credential routing identities before publishing; observation timestamps and
+transient cooldowns are ignored. The host offers no atomic registry revision, so
+changes to credentials, registered models, aliases or prefixes require resync.
+
+For a caller with credential restrictions, each model permitted by its model rule
+must be present in the saved directory and have an enabled, permitted credential.
+Shared models remain visible with any permitted owner. Disabled keys and explicit
+model denial remain restrictive even without a catalog. Missing or incomplete
+associations return `model_catalog_unavailable` or `model_catalog_out_of_sync` in
+the model-list JSON error and `X-CPA-Helper-Error`; HTTP remains 200 under the host
+response ABI. Header-identity fallback is unchanged. The actual scheduler remains
+authoritative for generation, priorities and transient availability.
+
 ## Storage and recovery
 
 `state_dir` defaults to `plugins/cpa-helper-state`; its parent must exist. CPA's
@@ -156,8 +210,10 @@ Other unknown plugin configuration fields are rejected before any policy state i
 opened. Only a newly created directory is bootstrapped with revision 1 and explicit
 unrestricted unknown-key behavior. An existing directory with missing/corrupt state
 is not reset.
-The single `state.json` transaction includes current policy, previous policy and
-idempotency receipts. Writes use a synchronized temporary file and replacement in
+The `state.json` transaction includes current policy, previous policy and
+idempotency receipts. The independent `model-catalog.json` transaction contains
+the current catalog and its own durable receipts. Catalog writes do not advance
+policy revisions or change policy rollback history. Writes use a synchronized temporary file and replacement in
 the same directory. Keep the directory on a local filesystem with atomic rename.
 No shared-state/multi-process or multi-node concurrency coordination is supported.
 Do not point multiple plugin instances at the same directory.

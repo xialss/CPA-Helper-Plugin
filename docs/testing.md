@@ -20,7 +20,7 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a fixture pinned to the single current CPA release (v8.0.29). It should
+Keep a fixture pinned to the single current CPA release (v8.0.32). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. V1 does not
 register a usage callback.
@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v8.0.29 binary for the target platform.
+Download the official plugin-enabled CPA v8.0.32 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v8.0.29\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.32\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -60,7 +60,7 @@ real credentials. It checks management authentication, static resources, aliases
 rollback. The test stops its CPA process and removes temporary state at completion.
 CPA itself can still perform its own background version checks.
 
-The v8.0.29 regression fixture verifies model detail filtering (allowed 200,
+The current regression fixture verifies model detail filtering (allowed 200,
 hidden 404, unrestricted caller 200), Chat rejection with one explicit error and
 sanitized real finish reasons, and continued error reporting on true truncation.
 Unit fixtures cover rejection on the terminal chunk itself, multiple choices,
@@ -70,7 +70,7 @@ content with response.completed) from truncated EOF (error, no buffered content)
 Both paths must release request accounting; client cancellation is also covered.
 Terminal HTTP flush failures are not injected by this fixture.
 
-The v8.0.29 fixture also checks that `/v1/models` contains only the permitted
+The current fixture also checks that `/v1/models` contains only the permitted
 alias for the restricted caller. Unit contract fixtures cover OpenAI, Claude
 cloaking/pagination IDs, Gemini, Codex, group denial precedence, disabled and
 unconfigured keys, missing/ambiguous headers, malformed catalogs and policy
@@ -84,7 +84,7 @@ version metadata and the resulting catalog, and verifies generation stays denied
 The fixture installs `CPA_PLUGIN_BINARY` under the canonical plugin filename,
 so a build artifact may have a trial suffix without changing its host plugin ID.
 
-The v8.0.29 fixture checks `GET /v8/management/plugins` configuration field
+The current fixture checks `GET /v8/management/plugins` configuration field
 types/defaults against the plugin's omitted settings. It also disables and
 re-enables both the individual plugin and the global plugin system through the
 v8 config API. Disabled instances must become unregistered and lose their
@@ -94,6 +94,25 @@ For both disable paths, an admitted stream ends while the plugin is detached;
 re-enabling must admit a new request without a stale concurrency reservation.
 Unit tests distinguish final RPC/ABI shutdown cleanup from temporary quiesce,
 which must retain in-flight accounting for replacement rollback.
+
+The v8.0.32 credential-catalog regression reads actual registered public aliases
+through `/v8/management/credentials/models?name=<scheduler ID>`, publishes the
+versioned plugin `/model-catalog`, and verifies explicit failure before first
+sync, shared-model visibility, an empty catalog and detail 404 when all owners
+are denied, restart persistence, and unchanged 3:1 subset weights. Unit tests
+cover exclusive/shared owners, category and individual denial precedence,
+disabled owners, every supported list format, group merges, policy hot updates,
+missing/incomplete directories, immutable indexes, transactional persistence,
+durable receipts, corruption, and uncertain durability. These reads make no
+upstream requests and reserve no concurrency.
+
+The Edge fixture checks automatic management-session catalog sync, registered
+public prefixes, credential-only list/detail restrictions, and failure of a
+per-credential read without a partial catalog publication. Directory unit tests
+verify actual file/config auth IDs instead of auth_index, rejection of malformed
+model responses, and absence of secrets, auth IDs and display data in snapshots.
+Generation admission remains the authoritative restriction; no live DSH profile
+or external provider credentials are used by these fixtures.
 
 ## Browser verification and preview
 
@@ -119,9 +138,10 @@ frames are tested at the CPA translator callback boundary; the plugin
 does not infer missing boundaries from arbitrary byte fragments.
 
 Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
-Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.29
+Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.32
 Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
 `cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
+Replace older trial binaries with the current target before running this test.
 The script creates its own temporary config, synthetic keys, mock upstream and
 container, then removes them. It does not replace the running CPA installation.
 Screenshots: `test-results/response-model-{desktop,mobile}.png`.
@@ -136,7 +156,7 @@ transactional reconfiguration. Ordinary upstream traffic is not used.
 
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v8.0.29\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.32\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```
@@ -144,7 +164,7 @@ npm run preview
 `npm run test:directory` checks v8 grouped credentials, host `auth_index`, shared
 indexes, duplicate keys, group inheritance, keyless providers, file credentials,
 invalid indexes and secret masking. The real CPA fixture verifies the configured
-credential ID bridge with actual subset routing; v8.0.29's file directory omits
+credential ID bridge with actual subset routing; v8.0.32's file directory omits
 configured credentials and scheduler hooks do not expose their indexes.
 The browser fixture rejects deprecated host API calls and verifies v8 config
 PUT, mapping deletion, preservation of sibling settings, MiB-to-byte conversion and reload.
@@ -153,7 +173,7 @@ It also loads a legacy `api-key-entries: null` keyless group, asserts the real v
 A Claude credential with an own `__proto__` header is selected using the browser's
 directory adapter: allow must reach the mock upstream, deny must return a 503
 routing error without reaching it. After asserting successful null-list discovery,
-the fixture normalizes its list to `[]`: CPA v8.0.29 reads legacy null lists but
+the fixture normalizes its list to `[]`: CPA v8.0.32 reads legacy null lists but
 rejects them when validating v8 configuration writes. Directory unit tests additionally
 cover inherited and per-key prototype-named headers for Claude/Codex and reject
 malformed credential lists other than the supported keyless null value.
@@ -170,7 +190,8 @@ is only an isolated server fixture. Neither command touches an existing CPA inst
 `scripts/live-ui-smoke.mjs` uses `CPA_URL` and `CPA_MANAGEMENT_KEY` to log into the
 actual official CPA management page in a fresh Edge context. It checks the plugin
 iframe, automatic session reuse after reload, masked downstream/upstream key display
-and inventory-only categories. It performs no policy writes or screenshots of real
+and inventory-only categories. Opening the plugin synchronizes its model catalog.
+It performs no policy writes or screenshots of real
 credentials. CPA Remember Password is enabled only inside that disposable context.
 
 ## Existing Docker service smoke test

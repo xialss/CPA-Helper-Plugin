@@ -16,6 +16,7 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 - API Key 分组与稳定的分组归属
 - 分组与 Key 维度的模型允许/拒绝规则
+- 模型目录按凭据路由过滤，支持独有模型、共享模型与公开别名/前缀
 - 上游凭据选择前的请求准入控制
 - 明确的拒绝原因与状态码
 - 针对单个 Key 的实例本地并发限制及生命周期清理
@@ -26,7 +27,7 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 ## 构建与安装
 
-需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.29。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
+需要 Go 1.26+、C 编译器，以及启用了插件支持的 CPA v8.0.32。只支持发布时验证过的最新 CPA 正式版，不维护旧版适配器；每次构建仍锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
@@ -59,7 +60,11 @@ CPA 重载配置时会卸载已禁用或未选中的插件。请在持久化配�
 
 当路由缩小了 CPA 的候选凭据集时，插件会在该子集内执行加权轮询（weighted round robin）选择。插件绝不会跨优先级层级检索：如果 CPA 仅提供了高优先级凭据，即使存在已授权的低优先级凭据，请求仍可能返回 503。未经过验证集成前，请勿同时启用其他具有竞争关系的调度器插件。
 
-模型列表过滤会将 Key／分组的模型允许和拒绝规则应用于 OpenAI、Claude、Gemini 和 Codex 列表；身份可辨识时，禁用的 Key 返回空列表。列表不判断上游凭据的路由可用性。使用单一请求头携带 Key（`Authorization`、`x-api-key` 或 `x-goog-api-key`）时按规则过滤。CPA v8.0.3 未向列表钩子提供已认证身份或 URL；缺少请求头身份（例如 URL 参数认证）或存在多个不同请求头 Key 时，保留 CPA 原始目录，并通过 `X-CPA-Helper-Model-List: unfiltered-identity-unavailable` 和日志标明原因。CPA 仍先执行认证；这只允许已通过 CPA 认证的请求放宽目录展示，不放宽实际生成权限。错误请求头 Key 与有效 URL Key 混用仍可能套用错误的展示规则。策略不可用或目录解析失败继续返回 JSON `error` 和 `X-CPA-Helper-Error`；受宿主接口限制，HTTP 状态仍为 200。模型列表不是权限安全边界。
+模型列表过滤会将 Key／分组的模型允许和拒绝规则应用于 OpenAI、Claude、Gemini 和 Codex 列表；身份可辨识时，禁用的 Key 返回空列表。存在凭据限制时，模型还必须至少关联一个已启用且满足合并凭据规则的上游；共享模型仍有获准上游时保留，全部被禁止时隐藏。隐藏模型的详情由 CPA 返回 404。目录查询不执行调度、不占并发、不调用上游；实际请求仍可能因 CPA 的优先级、临时不可用或上游错误失败。
+
+升级后打开插件面板，确认“CPA 目录已同步”。面板通过官方管理 API 读取各凭据的实际注册模型，将公开 ID 与凭据指纹的关联原子保存到 `state_dir/model-catalog.json`，不会保存原始密钥或管理登录凭据。修改 CPA 凭据、模型、别名或前缀后，需要点击“同步 CPA 目录”；只修改插件规则会立即按已有目录重新判断。同步失败保留上次有效目录，有凭据限制但没有可用关联时返回 `model_catalog_unavailable`，未覆盖当前模型时返回 `model_catalog_out_of_sync`。DeepSeek Harness 自定义模型 API 使用 `/v1` base URL 时，重新获取模型会请求 `/v1/models`；已保存的旧目录需在 DSH 中重新获取并保存。
+
+使用单一请求头携带 Key（`Authorization`、`x-api-key` 或 `x-goog-api-key`）时按规则过滤。CPA v8.0.32 仍未向列表钩子提供已认证身份或 URL；缺少请求头身份（例如 URL 参数认证）或存在多个不同请求头 Key 时，保留 CPA 原始目录，并通过 `X-CPA-Helper-Model-List: unfiltered-identity-unavailable` 和日志标明原因。CPA 仍先执行认证；这只允许已通过 CPA 认证的请求放宽目录展示，不放宽实际生成权限。错误请求头 Key 与有效 URL Key 混用仍可能套用错误的展示规则。策略不可用或目录解析失败继续返回 JSON `error` 和 `X-CPA-Helper-Error`；受宿主接口限制，HTTP 状态仍为 200。模型列表不是权限安全边界。
 
 升级前请务必备份状态目录。若已有状态文件缺失或损坏，插件将返回 503 而非直接重置权限。策略回滚会发布一个新的版本（revision）；二进制文件或状态降级则需要在停止 CPA 时恢复对应的备份。
 
@@ -78,7 +83,7 @@ Key 独立拒绝规则、分组名称及 ID，或未进入合并允许列表。�
 关闭只恢复 CPA 原始模型目录，实际生成的模型权限、凭据路由和并发限制继续生效。
 也可通过官方管理接口 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin`
 提交 `{"model_list_filter_enabled":false}`；需要 CPA 管理密钥。
-插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.7 和目标 CPA v8.0.29。
+插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.8 和目标 CPA v8.0.32。
 CPA 官方插件管理接口还会通过配置字段的 `default` 返回插件实际采用的默认值。
 
 ## 响应模型核验
