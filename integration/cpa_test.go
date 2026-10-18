@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"cpa-helper-plugin/internal/catalog"
 	"cpa-helper-plugin/internal/plugin"
 	"cpa-helper-plugin/internal/policy"
 )
@@ -236,7 +238,7 @@ openai-compatibility:
 		t.Fatalf("CPA did not load plugin: %s", log)
 	}
 	start()
-	for _, path := range []string{"/health", "/policy", "/directory", "/capabilities"} {
+	for _, path := range []string{"/health", "/policy", "/directory", "/capabilities", "/model-catalog"} {
 		status, body := call("GET", plugin.BasePath+path, "fixture-management", nil, nil)
 		if status != 200 {
 			t.Fatalf("%s: %d %s", path, status, body)
@@ -345,6 +347,7 @@ openai-compatibility:
 		t.Fatalf("v8 configured credentials: %d %s", status, body)
 	}
 	refs := map[string]string{}
+	authIDs := map[string]string{}
 	for _, group := range groups {
 		for _, key := range group.Keys {
 			if key.Index == "" {
@@ -353,7 +356,8 @@ openai-compatibility:
 			// v8.0.12 does not expose config credentials through /credentials.
 			// Pin the scheduler-ID bridge with actual credential subset routing.
 			sum := sha256.Sum256([]byte("openai-compatibility:fixture\x00" + key.Key + "\x00" + upstream.URL + "/v1\x00"))
-			refs[key.Key] = policy.CredentialRef("openai-compatibility:fixture:" + hex.EncodeToString(sum[:])[:12])
+			authIDs[key.Key] = "openai-compatibility:fixture:" + hex.EncodeToString(sum[:])[:12]
+			refs[key.Key] = policy.CredentialRef(authIDs[key.Key])
 		}
 	}
 	if refs["upstream-a"] == "" || refs["upstream-b"] == "" {
@@ -369,6 +373,46 @@ openai-compatibility:
 		}
 	}
 	put(p)
+	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte("model_catalog_unavailable")) || bytes.Contains(body, []byte(`"data"`)) {
+		t.Fatalf("missing credential catalog did not fail explicitly: %d %s", status, body)
+	}
+	modelSnapshot := catalog.Snapshot{ContractVersion: "v1", PluginVersion: policy.Version, CPAVersion: plugin.CPAVersion, Revision: 1, GeneratedAt: time.Now().UTC(), Credentials: []catalog.Credential{}}
+	for _, key := range []string{"upstream-a", "upstream-b", "upstream-forbidden"} {
+		status, body = call("GET", "/v8/management/credentials/models?name="+url.QueryEscape(authIDs[key]), "fixture-management", nil, nil)
+		var registered struct {
+			Models []struct{ ID string } `json:"models"`
+		}
+		if status != 200 || json.Unmarshal(body, &registered) != nil || len(registered.Models) != 2 {
+			t.Fatalf("registered public models for configured auth ID: %d %s", status, body)
+		}
+		credential := catalog.Credential{Ref: refs[key], Source: "ai-providers", Provider: "openai-compatible-fixture", Enabled: true, Models: []string{}}
+		for _, model := range registered.Models {
+			credential.Models = append(credential.Models, model.ID)
+		}
+		if !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"upstream-model"`)) {
+			t.Fatalf("catalog lost public alias: %s", body)
+		}
+		modelSnapshot.Credentials = append(modelSnapshot.Credentials, credential)
+	}
+	rawCatalog, err := json.Marshal(modelSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, from, to string }{
+		{"envelope-case", `"credentials":`, `"Credentials":`},
+		{"duplicate-enabled", `"enabled":true`, `"enabled":false,"enabled":true`},
+	} {
+		invalid := json.RawMessage(strings.Replace(string(rawCatalog), tc.from, tc.to, 1))
+		status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", invalid, map[string]string{"If-Match": "0", "Idempotency-Key": "catalog-invalid-" + tc.name})
+		if status != 400 || !bytes.Contains(body, []byte(`"invalid_model_catalog"`)) {
+			t.Fatalf("ambiguous model catalog %s: %d %s", tc.name, status, body)
+		}
+	}
+	status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", modelSnapshot, map[string]string{"If-Match": "0", "Idempotency-Key": "catalog-1"})
+	if status != 200 {
+		t.Fatalf("publish registered model catalog: %d %s", status, body)
+	}
 	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
 	var catalog struct {
 		Data []struct {
@@ -673,6 +717,14 @@ openai-compatibility:
 	p.Revision++
 	p.Keys[0].Rule.CredentialIDs = []string{policy.CredentialRef("nonexistent")}
 	put(p)
+	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte(`"data":[]`)) || bytes.Contains(body, []byte(`"error"`)) {
+		t.Fatalf("all credential routes denied still advertised models: %d %s", status, body)
+	}
+	status, body = call("GET", "/v1/models/route-model", "fixture-downstream", nil, nil)
+	if status != 404 {
+		t.Fatalf("credential-hidden model detail: %d %s", status, body)
+	}
 	status, body = chat("route-model", "fixture-downstream")
 	if status != 503 {
 		t.Fatalf("no routed credential: %d %s", status, body)
@@ -685,6 +737,10 @@ openai-compatibility:
 	waitIdle(t, call)
 	stop()
 	start()
+	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte(`"data":[]`)) {
+		t.Fatalf("restart lost credential-aware catalog restriction: %d %s", status, body)
+	}
 	status, body = chat("route-model", "fixture-downstream")
 	if status != 503 {
 		t.Fatalf("restart lost policy: %d %s", status, body)
@@ -800,6 +856,15 @@ openai-compatibility:
 	for _, secret := range []string{"fixture-downstream", "fixture-management", "upstream-a", "upstream-b"} {
 		if strings.Contains(string(stored), secret) {
 			t.Fatal("state leaked credential")
+		}
+	}
+	stored, err = os.ReadFile(filepath.Join(dir, "state", "model-catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"fixture-downstream", "fixture-management", "upstream-a", "upstream-b", "openai-compatibility:fixture:"} {
+		if bytes.Contains(stored, []byte(secret)) {
+			t.Fatal("model catalog leaked credential identity")
 		}
 	}
 	t.Log("Configured CPA binary: dynamic load, management auth/resources and config defaults, model-list filtering and authenticated visibility fallback, raw response model verification (Chat/Responses/Claude/Gemini), mappings and unknown rejection, alias policy, subset weights, streaming cancellation, concurrency, lifecycle cleanup, fail-closed routing, restart, rollback and policy recovery after per-plugin/global disable/re-enable passed")

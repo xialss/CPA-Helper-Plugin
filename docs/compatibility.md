@@ -3,7 +3,55 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Current target: CPA v8.0.29
+## Current target: CPA v8.0.32
+
+Plugin 0.1.8 targets v8.0.32
+(`911f49cbd49f4fe2516979754a7488a3fd14fe64`), C ABI 1 / RPC schema 6.
+The scheduler, host tables and model-list response
+contracts are unchanged from v8.0.29. The host still omits the authenticated
+principal and model-to-credential associations from model-list callbacks, and
+response interception cannot change their HTTP status.
+
+Credential-aware catalog filtering uses an explicit local snapshot populated
+through the official `/v8/management/config`, `/v8/management/credentials`, and
+`/v8/management/credentials/models?name=<authID>` APIs. `name` is a scheduler
+auth ID or auth filename, not `auth_index`. Registered public IDs preserve CPA
+aliases and prefixes. The existing pinned configuration-to-scheduler-ID bridge
+is retained; no CPA internal package is imported.
+
+The versioned plugin `/v1/model-catalog` management transaction publishes the
+complete validated snapshot atomically, with revision preconditions and durable
+idempotency. `model-catalog.json` is separate from the unchanged v1 policy state.
+No raw keys, auth IDs, labels or management credentials enter that file. Failed
+synchronization keeps the last valid directory; missing/incomplete directories
+produce explicit list errors for callers with credential restrictions. Catalog
+reads do not run scheduling, reserve concurrency, or contact an upstream.
+
+Synchronization runs when the plugin panel opens and on its directory-sync
+button. Changes to CPA credentials, registered models, aliases or prefixes need
+another synchronization. Policy changes apply immediately to the saved directory.
+Header identity limitations and the existing unfiltered-identity-unavailable
+behavior remain. List errors still use an HTTP 200 body/header replacement;
+hidden model details use CPA's existing 404 handling.
+
+Rollback restores the previous plugin/CPA binaries and a policy backup accepted
+by that plugin. Older plugins ignore the separate catalog file. Newly written
+0.1.8 policies need the corresponding previous-version backup when rolling back.
+
+Verified on 2026-10-17 with Go 1.26.4 / Windows amd64 / UCRT GCC 16.2.0:
+formatting, vet, all Go unit/management tests, race tests, the real CPA v8.0.32
+compatibility fixture, directory tests and the Edge browser smoke passed.
+The official Windows archive SHA-256 was checked before use:
+`df364b1f2dc9fe357f6a481bfb8a4066c3e5f5ef4ad7abfe45e59b4cec547c18`.
+The real fixtures verify credential-only filtering, hidden detail 404, shared
+owners, aliases/prefixes, catalog synchronization/failure/restart, and the
+existing weight, generation, stream, configuration and lifecycle contracts.
+Unit fixtures cover file auth IDs, disabled owners and corrupt/uncertain storage.
+Linux/Docker, a live DSH profile and external provider calls were not tested.
+The existing header-identity and HTTP-status restrictions remain. No deployed
+service or real credential was modified.
+
+## Historical target: CPA v8.0.29
 
 Plugin 0.1.7 targets v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`),
 C ABI 1 / RPC schema 6, unchanged from v8.0.17. The pinned SDK adds
@@ -236,6 +284,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |
 | 0.1.7 | v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Configuration defaults and disable/re-enable lifecycle contracts |
 | 0.1.6 | v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Preserve real Chat termination after rejection; Responses EOF and model detail contracts |
 | 0.1.5 | v8.0.12 (`2044a01f422998de79a5da8015141b878886534d`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | v8 management, indexed credential directory with pinned scheduler-ID bridge, per-chunk non-Responses verification |

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	modelcatalog "cpa-helper-plugin/internal/catalog"
 	"cpa-helper-plugin/internal/policy"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
@@ -44,7 +45,7 @@ func modelListError(code, message string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ok(pluginapi.ResponseInterceptResponse{Body: body, Headers: http.Header{"Content-Type": {"application/json"}, "Cache-Control": {"no-store"}, "X-CPA-Helper-Error": {code}}})
+	return ok(pluginapi.ResponseInterceptResponse{Body: body, Headers: http.Header{"Content-Type": {"application/json"}, "Cache-Control": {"no-store"}, "X-Cpa-Helper-Error": {code}}})
 }
 
 func (a *App) filterModelList(req pluginapi.ResponseInterceptRequest) ([]byte, error) {
@@ -78,6 +79,7 @@ func (a *App) filterModelList(req pluginapi.ResponseInterceptRequest) ([]byte, e
 	if err := json.Unmarshal(catalog[field], &entries); err != nil || entries == nil {
 		return modelListError("invalid_model_catalog", "模型目录条目格式无效")
 	}
+	var routes *modelcatalog.Engine
 	kept := make([]json.RawMessage, 0, len(entries))
 	first, last := "", ""
 	for _, entry := range entries {
@@ -98,6 +100,25 @@ func (a *App) filterModelList(req pluginapi.ResponseInterceptRequest) ([]byte, e
 			model = string(runes)
 		}
 		if k.Enabled && k.Rule.AllowsModel(requestedModel(model, "")) {
+			if scope != "" && k.Rule.HasCredentialRestrictions() {
+				if routes == nil {
+					store := a.currentCatalogStore()
+					if store == nil {
+						return modelListError("model_catalog_unavailable", "凭据模型目录不可用，请在插件管理面板同步 CPA 目录")
+					}
+					routes, err = store.Engine()
+					if err != nil {
+						return modelListError("model_catalog_unavailable", "凭据模型目录不可用，请在插件管理面板同步 CPA 目录")
+					}
+				}
+				allowed, err := routes.CanRoute(k.Rule, model)
+				if err != nil {
+					return modelListError("model_catalog_out_of_sync", "凭据模型目录未覆盖当前模型，请重新同步 CPA 目录")
+				}
+				if !allowed {
+					continue
+				}
+			}
 			kept = append(kept, entry)
 			if first == "" {
 				first = id

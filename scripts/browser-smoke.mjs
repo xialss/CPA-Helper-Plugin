@@ -10,12 +10,12 @@ import assert from 'node:assert/strict';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binary = process.env.CPA_BINARY;
-if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.29');
+if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.32');
 const serve = process.argv.includes('--serve');
 const dir = await mkdtemp(path.join(tmpdir(), 'cpa-helper-ui-'));
 await mkdir(path.join(dir, 'plugins'));
 const ext = process.platform === 'win32' ? 'dll' : 'so';
-await copyFile(path.join(root, 'dist', `cpa-helper-plugin.${ext}`), path.join(dir, 'plugins', `cpa-helper-plugin.${ext}`));
+await copyFile(process.env.CPA_PLUGIN_BINARY || path.join(root, 'dist', `cpa-helper-plugin.${ext}`), path.join(dir, 'plugins', `cpa-helper-plugin.${ext}`));
 let claudeRequests = 0;
 const upstream = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -36,7 +36,7 @@ const config = {
   plugins: { enabled: true, dir: posix(path.join(dir, 'plugins')), configs: { 'cpa-helper-plugin': { enabled: true, state_dir: posix(path.join(dir, 'state')) } } },
   'openai-compatibility': [
     { name: 'preview', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': [{ 'api-key': 'preview-upstream' }], models: [{ name: 'demo-model', alias: 'demo-model' }, { name: 'restricted-model', alias: 'restricted-model' }] },
-    { name: 'keyless-null', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': null, models: [{ name: 'keyless-model', alias: 'keyless-model' }] },
+    { name: 'keyless-null', prefix: 'team', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': null, models: [{ name: 'keyless-model', alias: 'keyless-model' }] },
   ],
   'claude-api-key': [{ 'api-key': 'header-fixture-key', 'base-url': `http://127.0.0.1:${upstream.address().port}`, headers: JSON.parse('{"__proto__":"fixture-header"}'), models: [{ name: 'header-model', alias: 'header-model' }] }],
 };
@@ -95,6 +95,13 @@ try {
         return cpaCredentialDirectory(config, files);
       });
       assert(inventory.some(item => item.auth_index === keyless.auth_index && item.provider === 'openai-compatible-keyless-null'));
+      const catalogURL = base + '/v0/management/plugins/cpa-helper-plugin/v1/model-catalog';
+      const readCatalog = async () => (await page.request.get(catalogURL, { headers: managementHeaders })).json();
+      const synchronized = await readCatalog();
+      assert.equal(synchronized.health.status, 'ok');
+      assert.equal(synchronized.snapshot.credentials.length, inventory.length);
+      assert(synchronized.snapshot.credentials.find(c => c.provider === 'openai-compatible-keyless-null').models.includes('team/keyless-model'), 'registered public prefix missing');
+      assert.doesNotMatch(JSON.stringify(synchronized.snapshot), /preview-upstream|preview-management|auth_id|auth_index|header-fixture-key/);
       // CPA reads legacy null but its v8 write validator requires a list. Normalize
       // this isolated fixture only, so unrelated configuration-save tests can run.
       keyless.keys = [];
@@ -102,6 +109,14 @@ try {
         headers: managementHeaders, data: currentConfig['api-keys']['openai-compatibility'],
       });
       assert.equal(normalized.status(), 200, await normalized.text());
+      // A failed per-credential read must not publish a partial catalog.
+      await page.route('**/v8/management/credentials/models?*', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'fixture model sync failed' }) }));
+      await page.locator('#sync').click();
+      await page.waitForFunction(() => !document.querySelector('#sync').disabled && document.querySelector('#message').classList.contains('error'));
+      assert.deepEqual((await readCatalog()).snapshot, synchronized.snapshot);
+      await page.unroute('**/v8/management/credentials/models?*');
+      await page.locator('#sync').click();
+      await page.waitForFunction(() => !document.querySelector('#sync').disabled && !document.querySelector('#message').classList.contains('error'));
       assert.equal(await page.locator('#management-key, #login-form, #add-category, #category-provider').count(), 0);
       assert.match(await page.locator('#key-rows').textContent(), /previe\.\.\.lpha/);
       assert.equal(await page.locator('#save, #rollback').count(), 0);
@@ -258,6 +273,16 @@ try {
           headers: { ...managementHeaders, 'If-Match': String(revision), 'Idempotency-Key': 'header-contract-' + field }, data: next,
         });
         assert.equal(published.status(), 200, await published.text());
+        const modelList = await page.request.get(base + '/v1/models', { headers: { Authorization: 'Bearer preview-key-alpha' } });
+        assert.equal(modelList.status(), 200, await modelList.text());
+        const ids = (await modelList.json()).data.map(model => model.id);
+        if (field === 'credential_ids') assert.deepEqual(ids, ['header-model'], 'credential-only allow leaked unrelated models');
+        else {
+          assert(!ids.includes('header-model'), 'credential-only deny still advertised the model');
+          assert(ids.includes('demo-model') && ids.includes('team/keyless-model'), 'deny hid unrelated public models');
+          const hidden = await page.request.get(base + '/v1/models/header-model', { headers: { Authorization: 'Bearer preview-key-alpha' } });
+          assert.equal(hidden.status(), 404, await hidden.text());
+        }
         const before = claudeRequests;
         const response = await page.request.post(base + '/v1/messages', {
           headers: { Authorization: 'Bearer preview-key-alpha', 'anthropic-version': '2023-06-01' },
@@ -275,7 +300,7 @@ try {
       }
       assert.deepEqual(hostRequests, [], 'UI called deprecated host management APIs');
       assert.deepEqual(errors, []);
-      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, binding count, responsive layout, null keyless list and prototype-header allow/deny routing.');
+      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, responsive layout, catalog sync and atomic failure, public prefixes, credential-only visibility and prototype-header allow/deny routing.');
     } finally { await browser.close(); }
     await cleanup();
   }

@@ -5,6 +5,7 @@
   const $ = id => document.getElementById(id);
   let token = "", snapshot = null, health = null, dirty = false, busy = false, editing = null, session = 0;
   let keys = [], credentials = [], models = [], verification = null, verificationDirty = false;
+  let pluginVersion = "", cpaVersion = "";
   const clone = value => structuredClone(value);
   const icons = () => lucide.createIcons();
   const unique = values => [...new Set(values)].sort();
@@ -65,6 +66,8 @@
   }
   async function load() {
     const [p, h, caps] = await Promise.all([api(base + "/policy"), api(base + "/health"), api(base + "/capabilities")]);
+    pluginVersion = caps.plugin_version; cpaVersion = caps.cpa_version;
+    $("plugin-version").textContent = "PLUGIN / " + pluginVersion;
     verification = caps.response_model_mismatch; renderVerification();
     snapshot = p; health = h; dirty = false;
     $("workspace").hidden = false;
@@ -128,18 +131,27 @@
     });
   };
   async function syncDirectory() {
-    const [config, directory] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials")]);
+    const [config, directory, current] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/model-catalog")]);
     const rawKeys = config.access?.["api-keys"] ?? [];
     if (!Array.isArray(rawKeys) || rawKeys.some(k => typeof k !== "string")) throw new Error("CPA API Key 目录格式错误");
     const nextCredentials = cpaCredentialDirectory(config, directory);
+    const revision = current.health?.catalog_revision;
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("插件模型目录修订无效");
+    const next = await cpaModelCatalog(nextCredentials, {
+      contract_version: "v1", plugin_version: pluginVersion, cpa_version: cpaVersion,
+      catalog_revision: revision + 1, generated_at: new Date().toISOString(),
+    }, id => api("/v8/management/credentials/models?name=" + encodeURIComponent(id)));
+    const [latestConfig, latestDirectory] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials")]);
+    if (JSON.stringify(config) !== JSON.stringify(latestConfig) || cpaDirectoryIdentity(nextCredentials) !== cpaDirectoryIdentity(cpaCredentialDirectory(latestConfig, latestDirectory))) throw new Error("同步期间 CPA 配置或凭据已变化，请重新同步");
+    const accepted = await api(base + "/model-catalog", { method: "PUT", body: next, headers: { "If-Match": String(revision), "Idempotency-Key": newID() } });
+    if (accepted.catalog_revision !== next.catalog_revision) throw new Error("模型目录保存响应修订不一致");
+    const nextHealth = await api(base + "/health");
+    if (nextHealth.model_catalog?.catalog_revision !== next.catalog_revision || nextHealth.model_catalog.status !== "ok") throw new Error("尚未确认模型目录生效，请刷新检查");
     keys = rawKeys.filter(k => k.trim()).map(k => ({ id: sha256("cli-proxy-api:caller-scope:v1\0" + k.trim()), display: maskKey(k) }));
     credentials = nextCredentials;
+    models = unique(next.credentials.flatMap(c => c.models));
+    health = nextHealth;
     render();
-    if (rawKeys.some(k => k.trim())) {
-      const data = await api("/v1/models", { credential: rawKeys.find(k => k.trim()).trim() });
-      if (!Array.isArray(data.data)) throw new Error("CPA 模型目录格式错误");
-      models = unique(data.data.map(m => m.id).filter(x => typeof x === "string"));
-    } else models = [];
     notice("CPA 目录已同步");
   }
   function render() {
@@ -168,6 +180,7 @@
     $("groups-empty").hidden = snapshot.groups.length > 0;
     $("health-details").replaceChildren();
     for (const [label, value] of [["状态", health.status], ["契约", health.contract_version], ["插件版本", health.plugin_version], ["最近同步", new Date(health.accepted_at).toLocaleString()], ["当前并发", Object.values(health.active || {}).reduce((a, b) => a + b, 0)], ["最近错误", health.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    if (health.model_catalog) for (const [label, value] of [["模型目录状态", health.model_catalog.status], ["模型目录修订", health.model_catalog.catalog_revision], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
     updateButtons(); icons();
   }
   function choiceList(container, choices, allowName, denyName, object = false) {

@@ -6,6 +6,7 @@
 cmd/cpa-helper-plugin/  C ABI entry point and official host-table bridge
 internal/plugin/       lifecycle adapters, management handlers and embedded UI
 internal/policy/       key, reusable group and model/credential policy logic
+internal/catalog/      registered model associations and credential visibility
 internal/snapshot/     validation, atomic persistence, idempotency and rollback
 internal/runtime/      in-flight reservations and authorized-subset selection
 ```
@@ -13,7 +14,7 @@ internal/runtime/      in-flight reservations and authorized-subset selection
 The exact package names may change, but dependency direction must remain:
 
 ```text
-ABI -> plugin -> policy/snapshot/runtime
+ABI -> plugin -> policy/catalog/snapshot/runtime
 ```
 
 Policy code must not know about CPA C function tables or HTTP transport. Adapter code
@@ -71,6 +72,16 @@ eligible unless denied. An empty allowlist is restrictive only when the schema m
 as restrictive; do not infer semantics from an empty JSON array alone.
 
 ## Failure and recovery
+
+Model-list callbacks lack the host's model-to-credential registry and authenticated
+principal. The management panel explicitly synchronizes registered public IDs via
+official CPA management APIs into a separate durable catalog. The response hook
+combines that immutable index with the current effective policy; it never calls
+the scheduler, reserves concurrency, or contacts an upstream. Unknown associations
+produce explicit list errors for credential-restricted callers. Policy edits take
+effect immediately; host registry changes need another synchronization. The saved
+catalog survives management outages and restarts. Generation continues through
+the original admission and scheduler hooks, including their priority limitations.
 
 - Validate the whole snapshot before replacing the active snapshot.
 - Write the accepted snapshot atomically and keep the previous revision for rollback.

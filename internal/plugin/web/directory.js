@@ -1,4 +1,4 @@
-/* CPA v8.0.29 directory adapter; see docs/compatibility.md for the ID bridge. */
+/* CPA v8.0.32 directory adapter; see docs/compatibility.md for the ID bridge. */
 "use strict";
 function cpaCredentialDirectory(config, directory) {
   if (!directory || !Array.isArray(directory.files)) throw new Error("CPA 凭据目录格式错误");
@@ -54,7 +54,7 @@ function cpaCredentialDirectory(config, directory) {
         const count = counters.get(idBase) || 0; counters.set(idBase, count + 1);
         const id = idBase + (count ? "-" + count : "");
         configured.set(id, {
-          ref: reference(id), auth_index: entry.auth_index, source: "ai-providers", provider: runtimeProvider,
+          ref: reference(id), auth_id: id, auth_index: entry.auth_index, source: "ai-providers", provider: runtimeProvider,
           label: [entry.name || group.name || provider, base, mask(key), "索引 " + entry.auth_index].filter(Boolean).join(" · "),
           status: (entry.disabled || (entry.weight ?? 1) <= 0) ? "disabled" : "active",
         });
@@ -71,12 +71,28 @@ function cpaCredentialDirectory(config, directory) {
     configured.delete(file.id);
     const fromConfig = file.runtime_only || file.source === "memory" || file.source === "config" || String(file.source || "").startsWith("config:");
     return {
-      ref: reference(file.id), auth_index: file.auth_index,
+      ref: reference(file.id), auth_id: file.id, auth_index: file.auth_index,
       source: fromConfig ? "ai-providers" : "auth-files",
       provider: (file.provider || file.type || "").toLowerCase(),
       label: label?.label || [file.name || file.id, file.label, file.email || file.account, "索引 " + file.auth_index].filter(Boolean).join(" · "),
-      status: file.disabled ? "disabled" : file.status,
+      status: (file.disabled || (file.weight ?? 1) <= 0) ? "disabled" : file.status,
     };
   });
   return [...files, ...configured.values()];
+}
+
+// Only registered public IDs and routing attributes cross the storage boundary.
+async function cpaModelCatalog(credentials, envelope, loadModels) {
+  const entries = await Promise.all(credentials.map(async credential => {
+    const result = await loadModels(credential.auth_id);
+    if (!result || !Array.isArray(result.models) || result.models.some(model => !model || typeof model.id !== "string" || !model.id.trim() || model.id !== model.id.trim() || /[\0\r\n\t]/.test(model.id))) throw new Error("CPA 凭据模型目录格式错误");
+    const models = [...new Map(result.models.map(model => [model.id.toLowerCase(), model.id])).values()].sort();
+    return { ref: credential.ref, source: credential.source, provider: credential.provider, enabled: credential.status !== "disabled", models };
+  }));
+  return { ...envelope, credentials: entries };
+}
+
+// Ignore observation timestamps and transient cooldowns when checking identities.
+function cpaDirectoryIdentity(credentials) {
+  return JSON.stringify(credentials.map(({ ref, auth_id, source, provider, status }) => ({ ref, auth_id, source, provider, enabled: status !== "disabled" })).sort((a, b) => a.ref.localeCompare(b.ref)));
 }

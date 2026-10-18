@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.7"
+var Version = "0.1.8"
 
 func compatiblePluginVersion(version string) bool {
 	// Host-managed feature settings do not change the v1 policy shape.
-	return version == Version || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
+	return version == Version || version == "0.1.7" || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.
@@ -257,4 +257,9 @@ func (r Rule) AllowsCredential(ref, source, provider string) bool {
 		}
 	}
 	return len(r.CredentialIDs) == 0 && len(r.CredentialProviders) == 0 || contains(r.CredentialIDs, ref) || slices.Contains(r.CredentialProviders, s)
+}
+
+// HasCredentialRestrictions reports whether model visibility needs credential associations.
+func (r Rule) HasCredentialRestrictions() bool {
+	return len(r.CredentialIDs)+len(r.DeniedCredentialIDs)+len(r.CredentialProviders)+len(r.DeniedCredentialProviders) > 0
 }
