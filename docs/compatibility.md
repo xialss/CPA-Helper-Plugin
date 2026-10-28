@@ -5,14 +5,15 @@ must be updated before any ABI-facing change.
 
 ## Current target: CPA v8.0.45
 
-Candidate plugin 0.1.9 targets CPA v8.0.45
+Plugin 0.1.9 targets CPA v8.0.45
 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`), C ABI 1 / RPC schema 7,
 with Go 1.26.10 or newer. Verified locally on Windows amd64 on 2026-10-28;
-plugin 0.1.9 remains an unpublished candidate. The implementation
+released as [v0.1.9](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.9)
+from source `1e98b18461898f200642677931ce44df8f5e534d`. The implementation
 and acceptance evidence are tracked in [tasks.md](tasks.md), with requirements in
 [cpa-v8.0.45-prd.md](cpa-v8.0.45-prd.md).
 
-The candidate requires schema 7, omits request bodies only after authentication,
+The plugin requires schema 7, omits request bodies only after authentication,
 and uses `host.auth.models` for actual credential/model associations. Valid
 0.1.8/v8.0.32 catalogs must remain readable without an automatic disk rewrite;
 an explicit synchronization writes the next revision for the new target. Unknown
@@ -52,9 +53,16 @@ CPA's current Chat handler terminates and cancels execution on a plugin error
 chunk; it does not forward a subsequent finish chunk or append a false truncation.
 Genuine truncation without plugin rejection still reports an error.
 
-See [cpa-v8.0.45-verification.md](cpa-v8.0.45-verification.md) for A-01–A-15
-evidence and observed toolchain failures. Linux/Docker and actual Codex-client
-smokes were not rerun; no live DSH profile, deployed service or external provider
+The release workflow passed source validation, Linux amd64 and Windows amd64
+builds, and publication. Both official archives were built with Go 1.26.10;
+their embedded source revision and SDK version match the tag. All three downloaded
+assets matched GitHub SHA-256 digests; both ZIPs matched `checksums.txt` and contain
+exactly their root-level library. The downloaded Windows DLL passed the real CPA
+compatibility/management fixture and complete Edge smoke again.
+
+See [cpa-v8.0.45-verification.md](cpa-v8.0.45-verification.md) for A-01–A-15,
+release artifact evidence and observed toolchain failures. Linux/Docker CPA runtime
+and actual Codex-client smokes were not rerun; no live DSH profile, deployed service or external provider
 credential was used. Header-identity and model-list HTTP-status limitations remain.
 
 ## Historical target: CPA v8.0.32
@@ -338,6 +346,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
 | 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |
 | 0.1.7 | v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Configuration defaults and disable/re-enable lifecycle contracts |
 | 0.1.6 | v8.0.17 (`57bde35179ecbdca176ca8923d39cc18805774f2`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Preserve real Chat termination after rejection; Responses EOF and model detail contracts |

@@ -103,3 +103,30 @@ Go fixture 自行停止 CPA 并清理临时状态。浏览器截图位于忽略�
 - 先修订 PRD R-03 和计划，再仅排除完整校验后缺少元数据且模型严格为空的 Host 非所有者；不推断来源/状态、不丢弃模型所有者，已知空模型条目保留。完整 Host 集合包括排除项参与双读。普通/刷新最终通知及运行状态显示当前浏览器已确认 revision 的排除计数，不新增持久化字段或 server `/health` 契约。
 - 修复后重新运行：目录 13/13、JS 语法、fmt/vet/all Go/race、UCRT DLL 重建、显式官方 CPA integration 和增强 Edge fixture 均通过。真实 Edge 测试覆盖停用 runtime-only 条目、同步与最终刷新计数、排除项 index/空→非空双读变化及旧快照保留；1440px/390px 截图已视检，无横向溢出。
 - 两名 reviewer 均只读复审通过并独立重跑 13/13，关闭 P2，无其他可行动 finding。R01–R05 全部完成；Windows 以外和真实外部服务等未运行边界保持不变，未提交、发布或改部署。
+
+## 6. 独立授权发布与正式产物核验
+
+此前章节记录实施及审查阶段的结果。2026-10-28 用户另行明确要求“提交，提 PR，发布新版本”，据此执行以下远程操作；没有自动合并 PR 或修改真实部署。
+
+- 源码提交：`1e98b18461898f200642677931ce44df8f5e534d`，分支 `compatible/cpa-v8.0.45`。
+- [PR #6](https://github.com/xialss/CPA-Helper-Plugin/pull/6) 指向 `main`，当前保持打开。
+- 附注标签 `v0.1.9` 固定上述源码；[正式 Release](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.9) 于 2026-10-28 07:58:50 UTC 发布，是 Latest，非 draft/prerelease。
+- [发布流水线 40653287131](https://github.com/xialss/CPA-Helper-Plugin/actions/runs/40653287131) 的 source validate、Linux amd64 build、Windows amd64 build、publish 四个 job 全部成功。
+- 本轮发布前重新运行 Go fmt/vet/all/race、目录 13/13、JS 语法、DLL 构建、真实 CPA fixture（12.42s）和 Edge smoke，均通过。普通 Go 测试未设置 CPA_BINARY 的跳过结果不作为兼容证明。
+
+下载三个正式资产后，逐一比较 GitHub release API 的 digest；两个 ZIP 再与 `checksums.txt` 比较，全部一致：
+
+| 资产 | SHA-256 |
+| --- | --- |
+| `checksums.txt` | `c270ee16119fac2f514e5b27bdc67e4c0aea00c29f759cc437203bd6d8e9313b` |
+| `cpa-helper-plugin_0.1.9_linux_amd64.zip` | `af21fd690c19ed74cd128cb2b59c8b44ad9bccca46f817d153287cf6b7c62c40` |
+| `cpa-helper-plugin_0.1.9_windows_amd64.zip` | `2d760c6243eaebbc2314b841e346257f20fa2f990c8092fc56a268e38726ea7c` |
+
+两个 ZIP 根目录分别只有 `cpa-helper-plugin.so` / `cpa-helper-plugin.dll`。`go version -m` 确认两者为 Go 1.26.10、模块 v0.1.9、CPA SDK v8.0.45、c-shared/CGO/amd64，对应平台正确，内嵌 `vcs.revision` 均为上述源码提交且 `vcs.modified=false`。
+
+以下载并解压的正式 Windows DLL 设置 `CPA_PLUGIN_BINARY`，再次针对已校验的官方 CPA v8.0.45 运行：
+
+- `go test -v ./integration -count=1 -timeout 90s`：通过，TestCPACompatibility 10.88s，实际动态加载及完整管理/协议/目录/路由/生命周期回归通过。
+- `npm run test:ui`：通过，覆盖真实 runtime-only 排除回归、完整 Host 双读、显式刷新失败阶段、草稿保留及响应式布局。
+
+Linux CI 的 Go 测试和 `.so` 构建通过；Linux/Docker 上的真实 CPA 动态加载、真实 Codex-client、live DSH/外部 provider 与终端 HTTP flush 故障注入仍未运行，不将 Windows 结果外推。发布后的补充提交仅完善这些文档与任务记录，不改变标签对应源码或重打标签。用户 `AGENTS.md` 未提交，构建物和测试临时状态仍在忽略范围或仓库外。

@@ -5,7 +5,7 @@
 - 更新日期：2026-10-28。
 - 需求依据：[PRD](cpa-v8.0.45-prd.md)；执行顺序：[实施计划](cpa-v8.0.45-plan.md)。
 - 本清单是该升级的状态入口；需求及验收定义以 PRD 为准，已支持版本以 [compatibility.md](compatibility.md) 为准。
-- 当前状态：兼容实现、团队交叉审查及本机 Windows 验收完成，正在准备 0.1.9 发布；完整证据见 [验收记录](cpa-v8.0.45-verification.md) 和 [审查记录](cpa-v8.0.45-review.md)。
+- 当前状态：兼容实现、团队交叉审查、v0.1.9 发布及正式产物核验完成；[PR #6](https://github.com/xialss/CPA-Helper-Plugin/pull/6) 待合并。完整证据见 [验收记录](cpa-v8.0.45-verification.md) 和 [审查记录](cpa-v8.0.45-review.md)。
 - 当前授权范围：2026-10-28 用户明确要求提交、提 PR、发布新版本；允许推送当前已审查分支及 v0.1.9 标签，由现有 workflow 构建并发布，不修改真实部署或自动合并 PR。
 - 状态：`完成` 有交付/证据；`待办` 尚未开始；`进行中` 有实际实施；`阻塞` 需记录具体条件。
 
@@ -82,7 +82,7 @@
 
 | ID | 任务与完成条件 | 依赖 | 状态 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| CPA845-REL01 | 确认版本未占用、远程分支和发布流程，复跑发布前必要检查 | R05 | 完成 | v0.1.9 尚不存在；Go fmt/vet/all/race、目录 13/13、JS/diff、重建 DLL、真实 CPA integration（12.42s）及 Edge smoke 均通过 |
-| CPA845-REL02 | 精确暂存任务文件、检查 staged diff、提交并推送，创建 PR | REL01 | 进行中 | 不纳入用户 AGENTS.md，不自动合并 |
-| CPA845-REL03 | 推送 v0.1.9 标签并确认 validate、双平台构建与发布 workflow 成功 | REL02 | 待办 | 由官方流水线生成发布物 |
-| CPA845-REL04 | 下载并验证正式资产，重测正式 Windows DLL，完善发布说明与记录 | REL03 | 待办 | 不把 Linux 编译通过当作 Linux CPA 运行时验证 |
+| CPA845-REL01 | 确认版本未占用、远程分支和发布流程，复跑发布前必要检查 | R05 | 完成 | 发布前确认 v0.1.9 未占用；Go fmt/vet/all/race、目录 13/13、JS/diff、重建 DLL、真实 CPA integration（12.42s）及 Edge smoke 均通过 |
+| CPA845-REL02 | 精确暂存任务文件、检查 staged diff、提交并推送，创建 PR | REL01 | 完成 | 源码提交 `1e98b18461898f200642677931ce44df8f5e534d`；[PR #6](https://github.com/xialss/CPA-Helper-Plugin/pull/6)；用户 AGENTS.md 未提交，PR 未合并 |
+| CPA845-REL03 | 推送 v0.1.9 标签并确认 validate、双平台构建与发布 workflow 成功 | REL02 | 完成 | [release workflow](https://github.com/xialss/CPA-Helper-Plugin/actions/runs/40653287131) 四个 job 全部成功；[v0.1.9](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.9) 已正式发布并标记 Latest |
+| CPA845-REL04 | 下载并验证正式资产，重测正式 Windows DLL，完善发布说明与记录 | REL03 | 完成 | 三个资产 GitHub SHA-256、两个 ZIP 与 checksums/根目录布局一致；Go 1.26.10 / SDK v8.0.45 / 内嵌源码 revision 一致；正式 Windows DLL 真实 CPA fixture（10.88s）与完整 Edge smoke 通过；详见验收记录第 6 节 |
