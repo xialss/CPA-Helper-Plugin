@@ -75,7 +75,12 @@ as restrictive; do not infer semantics from an empty JSON array alone.
 
 Model-list callbacks lack the host's model-to-credential registry and authenticated
 principal. The management panel explicitly synchronizes registered public IDs via
-official CPA management APIs into a separate durable catalog. The response hook
+the official `host.auth.models` callback into a separate durable catalog. Actual
+Host IDs determine ownership; a pinned configuration bridge supplies source/status
+metadata missing from the Host inventory and must match every registered fingerprint.
+Shared auth indexes never collapse distinct credentials. Two normalized reads detect
+observed registry changes before publication. Global source refresh is a separate
+explicit management action, outside automatic sync and the request path. The response hook
 combines that immutable index with the current effective policy; it never calls
 the scheduler, reserves concurrency, or contacts an upstream. Unknown associations
 produce explicit list errors for credential-restricted callers. Policy edits take

@@ -15,7 +15,7 @@ Model-list filtering is controlled through CPA's official plugin configuration:
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, target CPA v8.0.32 and plugin version 0.1.8.
+reports its current value, target CPA v8.0.45, plugin version 0.1.9, C ABI 1 and RPC schema 7.
 `GET /v8/management/plugins` exposes each configuration field's `default`,
 including the default state directory, enabled model-list filtering, and the
 complete disabled-by-default response-verification settings.
@@ -44,6 +44,7 @@ not open an additional listener or accept downstream API keys for administration
 | `POST` | `/policy/rollback` | activate a retained revision |
 | `GET` | `/capabilities` | supported modules, contract and ABI versions |
 | `GET` | `/directory` | host credential inventory plus observed configured credentials, with fingerprints only |
+| `GET` | `/credential-models` | complete Host-registered credential/model associations, fingerprinted actual IDs and no scheduling |
 | `GET` | `/model-catalog` | saved model associations and health; ETag is the independent catalog revision |
 | `PUT` | `/model-catalog` | validate and atomically persist a complete model directory |
 | `POST` | `/response-model/validate` | validate response-verification settings without saving |
@@ -65,7 +66,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.8",
+  "plugin_version": "0.1.9",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -74,10 +75,10 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.8` accepts snapshots produced by `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5`, `0.1.6`, and `0.1.7`;
-all nine supported producer versions are enumerated in the schema. The policy contract remains
-`v1`, and existing state does not require migration. A 0.1.8 snapshot can be rewritten
-with an older producer version only when rolling the binary back to that version.
+Plugin `0.1.9` accepts snapshots produced by `0.1.0` through `0.1.8`;
+all ten supported producer versions are enumerated in the schema. The policy contract remains
+`v1`, and existing policy state does not require migration. Binary rollback must restore
+the matching pre-upgrade state backup; do not rewrite producer metadata to bypass compatibility.
 The complete `PUT /policy` operation is the external administration interface for
 every control-panel setting. `groups[].id`, `groups[].name`, optional
 `groups[].note`, `groups[].rule`, `keys[].id`, `keys[].label`, `keys[].enabled`,
@@ -119,21 +120,36 @@ disabled), its current panel does not expose an in-memory session bridge; return
 to CPA to establish a saved session. Missing sessions produce an explicit error.
 Use HTTPS when accessing CPA over a network. No external CDN is needed at runtime.
 The UI reads CPA `/v8/management/config` (downstream keys at `access.api-keys`,
-upstream groups at `api-keys`), `/v8/management/credentials`, and each credential's
-`/v8/management/credentials/models?name=<authID>`. It uses the existing ID bridge
-for configured credentials, and actual IDs for file credentials. `auth_index`
-is not the model-query parameter. Model selections come from this full registered
-directory, independently of the administrator's downstream key restrictions.
+upstream groups at `api-keys`), `/v8/management/credentials`, and the plugin's
+`/credential-models`. The latter invokes `host.auth.models` with the management
+callback context and returns `{"credentials":[{"ref":"sha256:...","auth_index":"...","provider":"...","models":["public/alias"]}]}`.
+The fingerprint is computed from the actual Host ID, which is never returned.
+Missing, malformed or duplicate IDs/model arrays reject the entire read with
+502 `host_unavailable`; an explicit empty Host array is valid. Shared indexes are
+retained. This read does not schedule, reserve concurrency or contact an upstream.
+Model selections come from this full registered directory, independently of the
+administrator's downstream key restrictions; per-credential model queries are removed.
 CPA owns all key lifecycle operations.
 API keys are masked to the first six and last four characters (keys of ten or
 fewer characters display `***`); original credential names remain readable.
 Credential labels expose the host-provided `auth_index`, including group-level
 indexes for keyless providers. Policy references hash the scheduler `id`.
-CPA v8.0.32 omits configured credentials from `/credentials`, so the pinned
-configuration-to-ID adapter remains necessary for these entries. File credentials
-use their actual host IDs. Missing indexes and duplicate runtime IDs fail sync;
+CPA v8.0.45's Host model callback lacks source/status, while its credential
+inventory omits some configured/disabled runtime entries. The pinned
+configuration-to-ID adapter remains a metadata bridge, with every fingerprint,
+provider and index checked against the authoritative Host model result. File credentials
+use actual host IDs, including relative auth-directory paths. Unmatched metadata,
+missing indexes and duplicate runtime IDs fail the whole sync;
 shared indexes do not collapse distinct scheduler credentials. Indexes are display
 metadata, not a replacement for the policy's credential identity.
+One narrow exception is a fully validated Host-only entry with a strictly empty
+model array: it cannot own a model and is not included in the persisted catalog.
+The UI does not infer its source or enabled status. Known metadata entries with
+empty models are retained; unknown nonempty owners, malformed/duplicate entries,
+known metadata mismatches and missing Host coverage still reject the full sync.
+The success notice and health area show the count of entries not included for
+this reason. This browser observation is tied to the confirmed catalog revision,
+not persisted as credential status or policy.
 Plugin-owned management and resource paths retain CPA's required v0 namespace.
 Generated display labels are not written into policy. Credential categories come
 from the current CPA inventory. Obsolete policy selections remain visible for
@@ -145,6 +161,18 @@ Writes still use revision preconditions; failed saves do not display success or
 discard the edit. Rule IDs remain internal and are not shown in the rule list.
 The rollback route remains available to external administrators for recovery, but is
 intentionally absent from the lightweight control-panel workflow.
+
+Synchronization double-reads configuration, normalized credential identity/status,
+and registered model sets before publishing. A detected change aborts publication.
+The full normalized Host set participates, including every excluded model-free
+entry's fingerprint, index, provider and empty model set; identity changes,
+additions/removals and transitions to a nonempty model set abort publication too.
+CPA has no global registry revision, so this detects observed changes rather than
+providing a cross-API atomic snapshot. Opening the panel and ordinary sync never
+refresh model sources. The explicit “刷新 CPA 模型并同步” action POSTs
+`/v8/management/models/refresh` once, requires HTTP success and `ok: true`, then
+synchronizes and confirms catalog health. A successful CPA refresh cannot be rolled
+back by a failed plugin sync; the UI reports that partial outcome and retains edits.
 
 ## Synchronization
 
@@ -165,10 +193,10 @@ directory; `health.status` is `unavailable` and the initial ETag is `"0"`.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.8",
-  "cpa_version": "v8.0.32",
+  "plugin_version": "0.1.9",
+  "cpa_version": "v8.0.45",
   "catalog_revision": 1,
-  "generated_at": "2026-10-17T00:00:00Z",
+  "generated_at": "2026-10-28T00:00:00Z",
   "credentials": []
 }
 ```
@@ -185,11 +213,17 @@ requires backup recovery while CPA is stopped. Uncertain durability also removes
 the active catalog until restart reconciles disk state.
 
 `/health.model_catalog` reports availability, revision, generated/accepted times,
-age, credential count and last rejection. It is independent of policy health:
+age, credential count, last rejection, snapshot `plugin_version`, snapshot
+`cpa_version` and `refresh_required`. Valid format-1 v1 catalogs from producer
+0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
+unchanged and `refresh_required: true`. Startup does not rewrite them. New writes
+require the current 0.1.9/v8.0.45 envelope and the next revision; exact historical
+idempotency retries still return their original receipt. Unknown versions or
+corrupt state remain errors. This is independent of policy health:
 model-only policies and unrestricted callers do not need credential associations.
 There is no automatic expiry; management outages retain the last accepted catalog.
 The panel synchronizes on opening and on its sync button. It rechecks CPA config
-and credential routing identities before publishing; observation timestamps and
+and credential routing identities/model sets before publishing; observation timestamps and
 transient cooldowns are ignored. The host offers no atomic registry revision, so
 changes to credentials, registered models, aliases or prefixes require resync.
 

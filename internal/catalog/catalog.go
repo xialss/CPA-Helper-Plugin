@@ -11,7 +11,7 @@ import (
 )
 
 // CPAVersion pins the management API that supplies registered public model IDs.
-const CPAVersion = "v8.0.32"
+const CPAVersion = "v8.0.45"
 
 // ErrUnknownModel indicates that the saved catalog does not cover a host model.
 var ErrUnknownModel = errors.New("model absent from synchronized catalog")
@@ -55,7 +55,23 @@ func validText(s string) bool {
 
 // Compile validates every association before publishing any of the directory.
 func Compile(s Snapshot) (*Engine, error) {
-	if s.ContractVersion != "v1" || s.PluginVersion != policy.Version || s.CPAVersion != CPAVersion || s.Revision == 0 || s.Revision > 9007199254740991 || s.GeneratedAt.IsZero() || s.Credentials == nil {
+	if s.PluginVersion != policy.Version || s.CPAVersion != CPAVersion {
+		return nil, errors.New("unsupported model catalog producer or CPA version")
+	}
+	return compile(s)
+}
+
+// CompileStored accepts the last verified producer only when reloading durable
+// state. It preserves the old provenance and does not relax new-write validation.
+func CompileStored(s Snapshot) (*Engine, error) {
+	if s.PluginVersion == "0.1.8" && s.CPAVersion == "v8.0.32" {
+		return compile(s)
+	}
+	return Compile(s)
+}
+
+func compile(s Snapshot) (*Engine, error) {
+	if s.ContractVersion != "v1" || s.Revision == 0 || s.Revision > 9007199254740991 || s.GeneratedAt.IsZero() || s.Credentials == nil {
 		return nil, errors.New("invalid model catalog envelope")
 	}
 	e := &Engine{models: make(map[string][]Credential)}

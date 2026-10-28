@@ -134,7 +134,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 					{Name: "response_model_mismatch", Type: pluginapi.ConfigFieldTypeObject, Default: defaultModelMismatchConfig(), Description: "上游响应模型不匹配检测；默认关闭。"},
 				},
 			},
-			Capabilities: map[string]bool{"request_interceptor": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true},
+			Capabilities: map[string]bool{"request_interceptor": true, "request_interceptor_omit_body_after": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true},
 		})
 	case pluginabi.MethodResponseNormalizeBefore:
 		var req pluginapi.ResponseTransformRequest

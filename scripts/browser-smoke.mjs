@@ -10,10 +10,13 @@ import assert from 'node:assert/strict';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binary = process.env.CPA_BINARY;
-if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.32');
+if (!binary) throw new Error('CPA_BINARY must point to CPA v8.0.45');
 const serve = process.argv.includes('--serve');
 const dir = await mkdtemp(path.join(tmpdir(), 'cpa-helper-ui-'));
 await mkdir(path.join(dir, 'plugins'));
+await mkdir(path.join(dir, 'auth'));
+await writeFile(path.join(dir, 'auth', 'file-fixture.json'), JSON.stringify({ type: 'codex', email: 'file-fixture@example.invalid', access_token: 'synthetic-file-token', prefix: 'file' }), { mode: 0o600 });
+await writeFile(path.join(dir, 'auth', 'disabled-fixture.json'), JSON.stringify({ type: 'codex', email: 'disabled-fixture@example.invalid', disabled: true }), { mode: 0o600 });
 const ext = process.platform === 'win32' ? 'dll' : 'so';
 await copyFile(process.env.CPA_PLUGIN_BINARY || path.join(root, 'dist', `cpa-helper-plugin.${ext}`), path.join(dir, 'plugins', `cpa-helper-plugin.${ext}`));
 let claudeRequests = 0;
@@ -29,7 +32,8 @@ const probe = createServer(); await new Promise(resolve => probe.listen(0, '127.
 const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
 const posix = value => value.replaceAll('\\', '/');
 const config = {
-  host: '127.0.0.1', port, 'auth-dir': posix(path.join(dir, 'auth')),
+  host: '127.0.0.1', port, 'auth-dir': './auth',
+  'ws-auth': false,
   'api-keys': ['preview-key-alpha', 'preview-key-beta'],
   'remote-management': { 'secret-key': 'preview-management', 'allow-remote': false, 'disable-control-panel': true, 'disable-auto-update-panel': true },
   'request-retry': 0,
@@ -37,8 +41,9 @@ const config = {
   'openai-compatibility': [
     { name: 'preview', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': [{ 'api-key': 'preview-upstream' }], models: [{ name: 'demo-model', alias: 'demo-model' }, { name: 'restricted-model', alias: 'restricted-model' }] },
     { name: 'keyless-null', prefix: 'team', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': null, models: [{ name: 'keyless-model', alias: 'keyless-model' }] },
+    { name: 'shared-index', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': [{ 'api-key': 'shared-fixture' }, { 'api-key': 'shared-fixture', weight: 0 }], models: [{ name: 'shared-model', alias: 'shared-model' }] },
   ],
-  'claude-api-key': [{ 'api-key': 'header-fixture-key', 'base-url': `http://127.0.0.1:${upstream.address().port}`, headers: JSON.parse('{"__proto__":"fixture-header"}'), models: [{ name: 'header-model', alias: 'header-model' }] }],
+  'claude-api-key': [{ 'api-key': 'header-fixture-key', 'base-url': `http://127.0.0.1:${upstream.address().port}`, headers: JSON.parse('{"__proto__":"fixture-header"}'), 'excluded-models': ['removed-model'], models: [{ name: 'header-model', alias: 'header-model' }, { name: 'removed-model', alias: 'removed-model' }] }],
 };
 await writeFile(path.join(dir, 'config.yaml'), JSON.stringify(config), { mode: 0o600 });
 const log = createWriteStream(path.join(dir, 'cpa.log'));
@@ -46,7 +51,8 @@ const env = Object.fromEntries(['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', '
 const child = spawn(binary, ['--config', path.join(dir, 'config.yaml'), '--local-model'], { cwd: dir, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 child.stdout.pipe(log); child.stderr.pipe(log);
 let stopped = false;
-async function cleanup() { if (stopped) return; stopped = true; if (child.exitCode === null) { const exit = new Promise(resolve => child.once('exit', resolve)); child.kill(); await exit; } await new Promise(resolve => upstream.close(resolve)); log.end(); }
+let runtimeSocket;
+async function cleanup() { if (stopped) return; stopped = true; runtimeSocket?.close(); if (child.exitCode === null) { const exit = new Promise(resolve => child.once('exit', resolve)); child.kill(); await exit; } await new Promise(resolve => upstream.close(resolve)); log.end(); }
 process.on('SIGINT', () => cleanup().then(() => process.exit()));
 process.on('SIGTERM', () => cleanup().then(() => process.exit()));
 const base = `http://127.0.0.1:${port}`;
@@ -65,6 +71,8 @@ try {
     try {
       const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
       const errors = []; page.on('pageerror', error => errors.push(error.message));
+      let modelRefreshRequests = 0;
+      page.on('request', request => { if (new URL(request.url()).pathname === '/v8/management/models/refresh') modelRefreshRequests++; });
       const hostRequests = [];
       page.on('request', request => {
         if (new URL(request.url()).pathname.startsWith('/v0/management/') && !new URL(request.url()).pathname.startsWith('/v0/management/plugins/cpa-helper-plugin/v1/')) hostRequests.push(request.url());
@@ -97,11 +105,26 @@ try {
       assert(inventory.some(item => item.auth_index === keyless.auth_index && item.provider === 'openai-compatible-keyless-null'));
       const catalogURL = base + '/v0/management/plugins/cpa-helper-plugin/v1/model-catalog';
       const readCatalog = async () => (await page.request.get(catalogURL, { headers: managementHeaders })).json();
-      const synchronized = await readCatalog();
+      let synchronized = await readCatalog();
       assert.equal(synchronized.health.status, 'ok');
       assert.equal(synchronized.snapshot.credentials.length, inventory.length);
+      const shared = inventory.filter(item => item.provider === 'openai-compatible-shared-index');
+      assert.equal(shared.length, 2);
+      assert.equal(shared[0].auth_index, shared[1].auth_index, 'Fixture must exercise non-unique auth_index');
+      assert.notEqual(shared[0].ref, shared[1].ref);
+      assert.deepEqual(shared.map(item => synchronized.snapshot.credentials.find(c => c.ref === item.ref).enabled).sort(), [false, true]);
+      for (const name of ['file-fixture.json', 'disabled-fixture.json']) {
+        const file = inventory.find(item => item.auth_id === name);
+        assert(file, 'Relative auth-dir must preserve the actual file ID: ' + name);
+        const saved = synchronized.snapshot.credentials.find(c => c.ref === file.ref);
+        assert.equal(saved.source, 'auth-files');
+        assert.equal(saved.enabled, name === 'file-fixture.json');
+        if (saved.enabled) assert(saved.models.some(model => model.startsWith('file/')), 'File models lost the public prefix');
+      }
       assert(synchronized.snapshot.credentials.find(c => c.provider === 'openai-compatible-keyless-null').models.includes('team/keyless-model'), 'registered public prefix missing');
+      assert.deepEqual(synchronized.snapshot.credentials.find(c => c.provider === 'claude').models, ['header-model'], 'CPA-excluded models entered the plugin catalog');
       assert.doesNotMatch(JSON.stringify(synchronized.snapshot), /preview-upstream|preview-management|auth_id|auth_index|header-fixture-key/);
+      assert.equal(modelRefreshRequests, 0, 'Opening the panel must not refresh external model sources');
       // CPA reads legacy null but its v8 write validator requires a list. Normalize
       // this isolated fixture only, so unrelated configuration-save tests can run.
       keyless.keys = [];
@@ -109,14 +132,115 @@ try {
         headers: managementHeaders, data: currentConfig['api-keys']['openai-compatibility'],
       });
       assert.equal(normalized.status(), 200, await normalized.text());
-      // A failed per-credential read must not publish a partial catalog.
-      await page.route('**/v8/management/credentials/models?*', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'fixture model sync failed' }) }));
+      // CPA hides a disabled runtime-only credential from metadata while keeping
+      // its empty model set in the Host callback. It cannot own any model.
+      runtimeSocket = new WebSocket(base.replace('http:', 'ws:') + '/v1/ws');
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('AIStudio fixture socket did not open')), 10000);
+        runtimeSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+        runtimeSocket.addEventListener('error', error => { clearTimeout(timer); reject(error); }, { once: true });
+      });
+      let runtimeCredential;
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const files = await (await page.request.get(base + '/v8/management/credentials', { headers: managementHeaders })).json();
+        runtimeCredential = files.files.find(file => file.provider === 'aistudio');
+        if (runtimeCredential) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert(runtimeCredential, 'AIStudio runtime-only fixture did not register');
+      const disabledRuntime = await page.request.patch(base + '/v8/management/credentials/status', {
+        headers: managementHeaders, data: { name: runtimeCredential.id, auth_index: runtimeCredential.auth_index, disabled: true },
+      });
+      assert.equal(disabledRuntime.status(), 200, await disabledRuntime.text());
+      const hiddenRuntime = await (await page.request.get(base + '/v8/management/credentials', { headers: managementHeaders })).json();
+      assert(!hiddenRuntime.files.some(file => file.id === runtimeCredential.id), 'Disabled runtime-only credential must be absent from CPA metadata');
+      await page.locator('#sync').click();
+      await page.waitForFunction(() => !document.querySelector('#sync').disabled && !document.querySelector('#message').classList.contains('error'));
+      synchronized = await readCatalog();
+      assert.equal(synchronized.snapshot.credentials.length, inventory.length, 'A model-free Host entry must not create an owner or block the catalog');
+      assert.match(await page.locator('#message').textContent(), /排除 1 个缺少元数据的无模型条目/);
+      assert.match(await page.locator('#catalog-excluded').textContent(), /排除 1 个/);
+      assert.equal(await page.locator('#catalog-excluded').getAttribute('hidden'), null);
+      assert.doesNotMatch(JSON.stringify(synchronized.snapshot), /aistudio|auth_id|auth_index/);
+      // A failed Host read must not publish a partial catalog.
+      await page.route('**/v1/credential-models', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'fixture model sync failed' }) }));
       await page.locator('#sync').click();
       await page.waitForFunction(() => !document.querySelector('#sync').disabled && document.querySelector('#message').classList.contains('error'));
       assert.deepEqual((await readCatalog()).snapshot, synchronized.snapshot);
-      await page.unroute('**/v8/management/credentials/models?*');
+      await page.unroute('**/v1/credential-models');
+      const hostModelURL = base + '/v0/management/plugins/cpa-helper-plugin/v1/credential-models';
+      const hostModelFixture = await (await page.request.get(hostModelURL, { headers: managementHeaders })).json();
+      const excludedRuntime = hostModelFixture.credentials.find(entry => entry.provider === 'aistudio');
+      assert(excludedRuntime, 'Host callback must retain the disabled runtime-only entry');
+      assert.deepEqual(excludedRuntime.models, []);
+      let modelReads = 0;
+      await page.route('**/v1/credential-models', route => {
+        const result = structuredClone(hostModelFixture);
+        if (++modelReads === 2) result.credentials[0].models.push('changed-during-sync');
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
+      });
+      await page.locator('#sync').click();
+      await page.waitForFunction(() => !document.querySelector('#sync').disabled && document.querySelector('#message').classList.contains('error'));
+      assert.equal(modelReads, 2);
+      assert.deepEqual((await readCatalog()).snapshot, synchronized.snapshot, 'Model change during sync published a partial revision');
+      await page.unroute('**/v1/credential-models');
+      // Changes to entries excluded from the durable catalog still invalidate
+      // the complete Host double read, including an empty -> owning transition.
+      for (const change of ['auth_index', 'models']) {
+        let reads = 0;
+        await page.route('**/v1/credential-models', route => {
+          const result = structuredClone(hostModelFixture);
+          if (++reads === 2) {
+            const entry = result.credentials.find(item => item.ref === excludedRuntime.ref);
+            if (change === 'auth_index') entry.auth_index += '-changed';
+            else entry.models.push('new-owner-during-sync');
+          }
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
+        });
+        await page.locator('#sync').click();
+        await page.waitForFunction(() => !document.querySelector('#sync').disabled && document.querySelector('#message').classList.contains('error'));
+        assert.equal(reads, 2);
+        assert.deepEqual((await readCatalog()).snapshot, synchronized.snapshot, 'Excluded Host ' + change + ' change published a partial revision');
+        await page.unroute('**/v1/credential-models');
+      }
       await page.locator('#sync').click();
       await page.waitForFunction(() => !document.querySelector('#sync').disabled && !document.querySelector('#message').classList.contains('error'));
+      assert.equal(modelRefreshRequests, 0, 'Ordinary sync must not refresh model sources');
+      const beforeRefresh = await readCatalog();
+      await page.locator('[data-tab="verification"]').click();
+      await page.locator('#verify-ignored').fill('unsaved-refresh-draft');
+      await page.locator('[data-tab="health"]').click();
+      await page.route('**/v8/management/models/refresh', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'fixture refresh failed' }) }));
+      await page.locator('#refresh-models').click();
+      await page.waitForFunction(() => !document.querySelector('#refresh-models').disabled && document.querySelector('#message').classList.contains('error'));
+      assert.deepEqual((await readCatalog()).snapshot, beforeRefresh.snapshot);
+      await page.unroute('**/v8/management/models/refresh');
+      await page.route('**/v8/management/models/refresh', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+      await page.route('**/v1/credential-models', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'fixture sync failed after refresh' }) }));
+      await page.locator('#refresh-models').click();
+      await page.waitForFunction(() => !document.querySelector('#refresh-models').disabled && document.querySelector('#message').classList.contains('error'));
+      assert.match(await page.locator('#message').textContent(), /已刷新.*尚未确认同步生效/);
+      assert.deepEqual((await readCatalog()).snapshot, beforeRefresh.snapshot);
+      await page.unroute('**/v1/credential-models');
+      await page.unroute('**/v8/management/models/refresh');
+      await page.locator('#refresh-models').click();
+      await page.waitForFunction(() => !document.querySelector('#refresh-models').disabled && !document.querySelector('#message').classList.contains('error'));
+      assert.equal(modelRefreshRequests, 3, 'One refresh request per explicit click');
+      assert((await readCatalog()).snapshot.catalog_revision > beforeRefresh.snapshot.catalog_revision);
+      assert.match(await page.locator('#message').textContent(), /排除 1 个缺少元数据的无模型条目/);
+      assert.match(await page.locator('#catalog-excluded').textContent(), /排除 1 个/);
+      assert.equal(await page.locator('#catalog-excluded').isVisible(), true);
+      assert.equal(await page.locator('#verify-ignored').inputValue(), 'unsaved-refresh-draft');
+      await page.locator('[data-tab="verification"]').click();
+      await page.locator('#verify-ignored').fill('');
+      await page.locator('[data-tab="health"]').click();
+      await mkdir(path.join(root, 'test-results'), { recursive: true });
+      await page.screenshot({ path: path.join(root, 'test-results', 'health-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Model-refresh health page overflows');
+      await page.screenshot({ path: path.join(root, 'test-results', 'health-mobile.png'), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.locator('[data-tab="keys"]').click();
       assert.equal(await page.locator('#management-key, #login-form, #add-category, #category-provider').count(), 0);
       assert.match(await page.locator('#key-rows').textContent(), /previe\.\.\.lpha/);
       assert.equal(await page.locator('#save, #rollback').count(), 0);
@@ -152,7 +276,7 @@ try {
       assert.equal(await page.locator('#edit-key-value').textContent(), 'previe...lpha');
       assert.match(await page.locator('#credential-options').textContent(), /previe\.\.\.ream/);
       assert.doesNotMatch(await page.locator('#credential-options').textContent(), /preview-upstream/);
-      assert.equal(await page.locator('#category-options select').count(), 3);
+      assert.equal(await page.locator('#category-options select').count(), new Set(inventory.map(item => item.source + '/' + item.provider)).size);
       await page.locator('#edit-label').fill('Development key'); await page.locator('#edit-label').press('Tab');
       await page.locator('#edit-limit').fill('2'); await page.locator('#edit-limit').press('Tab');
       await page.locator('#bindings input').first().check();
@@ -300,7 +424,7 @@ try {
       }
       assert.deepEqual(hostRequests, [], 'UI called deprecated host management APIs');
       assert.deepEqual(errors, []);
-      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, responsive layout, catalog sync and atomic failure, public prefixes, credential-only visibility and prototype-header allow/deny routing.');
+      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, responsive layout, Host model sync with files/shared indexes/keyless/disabled credentials, model-free runtime-only exclusion with visible counts and complete Host double reads, exclusions/prefixes, atomic sync failures, explicit refresh stages/draft retention and prototype-header allow/deny routing.');
     } finally { await browser.close(); }
     await cleanup();
   }

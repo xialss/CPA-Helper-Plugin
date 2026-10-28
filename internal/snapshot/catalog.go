@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cpa-helper-plugin/internal/catalog"
+	"cpa-helper-plugin/internal/policy"
 )
 
 // ErrCatalogUnavailable signals missing or invalid model associations.
@@ -23,6 +24,10 @@ type catalogDiskState struct {
 	Current    catalog.Snapshot   `json:"current"`
 	Receipts   map[string]receipt `json:"receipts"`
 	AcceptedAt time.Time          `json:"accepted_at"`
+}
+
+func validReceipt(r receipt, revision uint64) bool {
+	return policy.ValidScope(r.Digest) && r.Revision > 0 && r.Revision <= revision
 }
 
 // CatalogStore persists model associations separately from the v1 policy file.
@@ -45,6 +50,9 @@ type CatalogHealth struct {
 	AgeSeconds      int64     `json:"catalog_age_seconds"`
 	CredentialCount int       `json:"credential_count"`
 	LastError       string    `json:"last_error,omitempty"`
+	PluginVersion   string    `json:"plugin_version,omitempty"`
+	CPAVersion      string    `json:"cpa_version,omitempty"`
+	RefreshRequired bool      `json:"refresh_required"`
 }
 
 // OpenCatalog reloads a saved directory. A missing file requires explicit sync.
@@ -66,7 +74,14 @@ func OpenCatalog(dir string) *CatalogStore {
 		s.lastError = "invalid model catalog state"
 		return s
 	}
-	s.engine, err = catalog.Compile(s.state.Current)
+	for key, r := range s.state.Receipts {
+		if key == "" || !validReceipt(r, s.state.Current.Revision) {
+			s.frozen = true
+			s.lastError = "invalid model catalog receipt"
+			return s
+		}
+	}
+	s.engine, err = catalog.CompileStored(s.state.Current)
 	if err != nil {
 		s.frozen = true
 		s.lastError = "invalid model catalog: " + err.Error()
@@ -121,6 +136,9 @@ func (s *CatalogStore) health() CatalogHealth {
 		h.AcceptedAt = s.state.AcceptedAt
 		h.AgeSeconds = int64(time.Since(h.GeneratedAt).Seconds())
 		h.CredentialCount = len(s.state.Current.Credentials)
+		h.PluginVersion = s.state.Current.PluginVersion
+		h.CPAVersion = s.state.Current.CPAVersion
+		h.RefreshRequired = h.CPAVersion != catalog.CPAVersion || h.PluginVersion != policy.Version
 	}
 	return h
 }

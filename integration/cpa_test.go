@@ -13,18 +13,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"cpa-helper-plugin/internal/catalog"
+	modelcatalog "cpa-helper-plugin/internal/catalog"
 	"cpa-helper-plugin/internal/plugin"
 	"cpa-helper-plugin/internal/policy"
 )
@@ -238,7 +238,7 @@ openai-compatibility:
 		t.Fatalf("CPA did not load plugin: %s", log)
 	}
 	start()
-	for _, path := range []string{"/health", "/policy", "/directory", "/capabilities", "/model-catalog"} {
+	for _, path := range []string{"/health", "/policy", "/directory", "/capabilities", "/model-catalog", "/credential-models"} {
 		status, body := call("GET", plugin.BasePath+path, "fixture-management", nil, nil)
 		if status != 200 {
 			t.Fatalf("%s: %d %s", path, status, body)
@@ -293,9 +293,16 @@ openai-compatibility:
 	var defaults struct {
 		Filter   bool                       `json:"model_list_filter_enabled"`
 		Response policy.ResponseModelConfig `json:"response_model_mismatch"`
+		ABI      uint32                     `json:"abi_version"`
+		Schema   uint32                     `json:"schema_version"`
+		CPA      string                     `json:"cpa_version"`
+		Plugin   string                     `json:"plugin_version"`
 	}
 	if status != 200 || json.Unmarshal(body, &defaults) != nil {
 		t.Fatalf("default capabilities: %d %s", status, body)
+	}
+	if defaults.ABI != 1 || defaults.Schema != 7 || defaults.CPA != "v8.0.45" || defaults.Plugin != policy.Version {
+		t.Fatalf("target capabilities do not match the pinned contract: %s", body)
 	}
 	// The host's serialized defaults must agree with the plugin's omitted settings.
 	wantDefaults, err := json.Marshal(map[string]any{
@@ -377,20 +384,27 @@ openai-compatibility:
 	if status != 200 || !bytes.Contains(body, []byte("model_catalog_unavailable")) || bytes.Contains(body, []byte(`"data"`)) {
 		t.Fatalf("missing credential catalog did not fail explicitly: %d %s", status, body)
 	}
-	modelSnapshot := catalog.Snapshot{ContractVersion: "v1", PluginVersion: policy.Version, CPAVersion: plugin.CPAVersion, Revision: 1, GeneratedAt: time.Now().UTC(), Credentials: []catalog.Credential{}}
+	modelSnapshot := modelcatalog.Snapshot{ContractVersion: "v1", PluginVersion: policy.Version, CPAVersion: plugin.CPAVersion, Revision: 1, GeneratedAt: time.Now().UTC(), Credentials: []modelcatalog.Credential{}}
+	status, body = call("GET", plugin.BasePath+"/credential-models", "fixture-management", nil, nil)
+	var hostModels struct {
+		Credentials []struct {
+			Ref      string   `json:"ref"`
+			Index    string   `json:"auth_index"`
+			Provider string   `json:"provider"`
+			Models   []string `json:"models"`
+		} `json:"credentials"`
+	}
+	if status != 200 || json.Unmarshal(body, &hostModels) != nil || len(hostModels.Credentials) != 3 || bytes.Contains(body, []byte("openai-compatibility:fixture:")) {
+		t.Fatalf("host.auth.models contract: %d %s", status, body)
+	}
 	for _, key := range []string{"upstream-a", "upstream-b", "upstream-forbidden"} {
-		status, body = call("GET", "/v8/management/credentials/models?name="+url.QueryEscape(authIDs[key]), "fixture-management", nil, nil)
-		var registered struct {
-			Models []struct{ ID string } `json:"models"`
+		credential := modelcatalog.Credential{Ref: refs[key], Source: "ai-providers", Provider: "openai-compatible-fixture", Enabled: true, Models: []string{}}
+		for _, entry := range hostModels.Credentials {
+			if entry.Ref == credential.Ref {
+				credential.Models = append(credential.Models, entry.Models...)
+			}
 		}
-		if status != 200 || json.Unmarshal(body, &registered) != nil || len(registered.Models) != 2 {
-			t.Fatalf("registered public models for configured auth ID: %d %s", status, body)
-		}
-		credential := catalog.Credential{Ref: refs[key], Source: "ai-providers", Provider: "openai-compatible-fixture", Enabled: true, Models: []string{}}
-		for _, model := range registered.Models {
-			credential.Models = append(credential.Models, model.ID)
-		}
-		if !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"upstream-model"`)) {
+		if len(credential.Models) != 2 || !slices.Contains(credential.Models, "route-model") || slices.Contains(credential.Models, "upstream-model") {
 			t.Fatalf("catalog lost public alias: %s", body)
 		}
 		modelSnapshot.Credentials = append(modelSnapshot.Credentials, credential)
@@ -616,20 +630,23 @@ openai-compatibility:
 		}
 		waitIdle(t, call)
 	}
-	// Cross-protocol conversion rewrites model metadata; raw observation must win.
-	if bytes.Count(body, []byte(`"error":`)) != 1 || bytes.Contains(body, []byte("internal_server_error")) || bytes.Contains(body, []byte("terminal-secret")) || !bytes.Contains(body, []byte(`"finish_reason":"stop"`)) {
+	// v8.0.45 treats the plugin's error chunk as terminal and cancels before
+	// delivering later finish chunks. It must not append a false success/truncation.
+	if bytes.Count(body, []byte(`"error":`)) != 1 || bytes.Contains(body, []byte("internal_server_error")) || bytes.Contains(body, []byte("terminal-secret")) || bytes.Contains(body, []byte(`"finish_reason":"stop"`)) {
 		t.Fatalf("Chat rejection terminal sequence: %s", body)
 	}
 	mu.Lock()
 	streamEnding = "truncated"
+	responseModel = "route-model"
 	mu.Unlock()
 	_, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "messages": []map[string]string{{"role": "user", "content": "truncated"}}}, nil)
-	if !bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("upstream stream closed")) || bytes.Contains(body, []byte("finish_reason\":\"stop")) {
+	if bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("upstream stream closed")) || bytes.Contains(body, []byte("finish_reason\":\"stop")) {
 		t.Fatalf("real truncation hidden: %s", body)
 	}
 	waitIdle(t, call)
 	mu.Lock()
 	streamEnding = "done"
+	responseModel = "watered-model"
 	mu.Unlock()
 	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "verify responses"}, nil)
 	if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) {
@@ -847,6 +864,60 @@ openai-compatibility:
 			}
 			waitIdle(t, call)
 		}
+	}
+	stop()
+	// Reload a captured-format 0.1.8/v8.0.32 catalog without rewriting its
+	// provenance, then explicitly publish and reload the next current revision.
+	legacy := modelcatalog.Clone(modelSnapshot)
+	legacy.PluginVersion, legacy.CPAVersion, legacy.Revision = "0.1.8", "v8.0.32", 7
+	legacy.GeneratedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDigest := sha256.Sum256(append([]byte("catalog:6:"), legacyJSON...))
+	legacyState := map[string]any{"format": 1, "current": legacy, "accepted_at": legacy.GeneratedAt.Add(time.Minute), "receipts": map[string]any{"legacy": map[string]any{"digest": hex.EncodeToString(legacyDigest[:]), "revision": 7}}}
+	legacyDisk, err := json.Marshal(legacyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogPath := filepath.Join(dir, "state", "model-catalog.json")
+	if err := os.WriteFile(catalogPath, legacyDisk, 0600); err != nil {
+		t.Fatal(err)
+	}
+	start()
+	status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":true`)) || !bytes.Contains(body, []byte(`"cpa_version":"v8.0.32"`)) {
+		t.Fatalf("legacy catalog unavailable after real CPA upgrade: %d %s", status, body)
+	}
+	if saved, err := os.ReadFile(catalogPath); err != nil || !bytes.Equal(saved, legacyDisk) {
+		t.Fatal("CPA startup rewrote the legacy catalog", err)
+	}
+	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"blocked-model"`)) {
+		t.Fatalf("legacy catalog lost policy filtering: %d %s", status, body)
+	}
+	upgrade := modelcatalog.Clone(legacy)
+	upgrade.PluginVersion, upgrade.CPAVersion, upgrade.Revision = policy.Version, plugin.CPAVersion, 8
+	upgrade.GeneratedAt = time.Now().UTC()
+	status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", upgrade, map[string]string{"If-Match": "7", "Idempotency-Key": "upgrade"})
+	if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
+		t.Fatalf("legacy upgrade publication: %d %s", status, body)
+	}
+	stop()
+	start()
+	status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
+	if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":false`)) || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
+		t.Fatalf("restart lost upgraded catalog: %d %s", status, body)
+	}
+	status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
+	var afterUpgrade policy.Snapshot
+	if status != 200 || json.Unmarshal(body, &afterUpgrade) != nil || !reflect.DeepEqual(afterUpgrade, persistedPolicy) {
+		t.Fatalf("catalog upgrade changed policy: %d %s", status, body)
+	}
+	status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", legacy, map[string]string{"If-Match": "6", "Idempotency-Key": "legacy"})
+	if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":7`)) {
+		t.Fatalf("restart lost legacy receipt: %d %s", status, body)
 	}
 	stop()
 	stored, err := os.ReadFile(filepath.Join(dir, "state", "state.json"))

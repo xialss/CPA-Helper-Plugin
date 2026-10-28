@@ -135,7 +135,7 @@ func TestMissingIncompleteAndOfflineCatalog(t *testing.T) {
 	publishCatalog(t, a, []catalog.Credential{{Ref: policy.CredentialRef("a"), Source: "ai-providers", Provider: "fixture", Enabled: true, Models: []string{"m"}}})
 	// Restart without a host callback or a connected management panel.
 	restarted := New(nil)
-	invoke(t, restarted, pluginabi.MethodPluginRegister, lifecycle{SchemaVersion: 6, ConfigYAML: []byte("state_dir: " + a.stateDir)})
+	invoke(t, restarted, pluginabi.MethodPluginRegister, lifecycle{SchemaVersion: pluginabi.SchemaVersion, ConfigYAML: []byte("state_dir: " + a.stateDir)})
 	restarted.host = func(string, any) (json.RawMessage, error) { t.Fatal("list queried the host"); return nil, nil }
 	if resp = listResponse(t, restarted, req); string(resp.Body) != `{"data":[{"id":"m"}]}` {
 		t.Fatal("offline restart lost valid associations", string(resp.Body))

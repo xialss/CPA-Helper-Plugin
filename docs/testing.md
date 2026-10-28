@@ -20,7 +20,7 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a fixture pinned to the single current CPA release (v8.0.32). It should
+Keep a fixture pinned to the single current CPA release (v8.0.45). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. V1 does not
 register a usage callback.
@@ -39,12 +39,12 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-Download the official plugin-enabled CPA v8.0.32 binary for the target platform.
+Download the official plugin-enabled CPA v8.0.45 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
-$env:CPA_BINARY = 'C:\path\to\v8.0.32\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.45\cli-proxy-api.exe'
 go test -v ./integration -count=1 -timeout 90s
 ```
 
@@ -61,8 +61,9 @@ rollback. The test stops its CPA process and removes temporary state at completi
 CPA itself can still perform its own background version checks.
 
 The current regression fixture verifies model detail filtering (allowed 200,
-hidden 404, unrestricted caller 200), Chat rejection with one explicit error and
-sanitized real finish reasons, and continued error reporting on true truncation.
+hidden 404, unrestricted caller 200), Chat rejection with one explicit terminal
+error and CPA cancellation without appended success/truncation, and continued
+error reporting on a matching but genuinely truncated upstream stream.
 Unit fixtures cover rejection on the terminal chunk itself, multiple choices,
 missing/null finish reasons, and removal of content/tool calls/usage.
 Responses fixtures distinguish clean EOF after finish_reason (release buffered
@@ -95,8 +96,8 @@ re-enabling must admit a new request without a stale concurrency reservation.
 Unit tests distinguish final RPC/ABI shutdown cleanup from temporary quiesce,
 which must retain in-flight accounting for replacement rollback.
 
-The v8.0.32 credential-catalog regression reads actual registered public aliases
-through `/v8/management/credentials/models?name=<scheduler ID>`, publishes the
+The v8.0.45 credential-catalog regression reads actual registered public aliases
+through the plugin `/credential-models` backed by `host.auth.models`, publishes the
 versioned plugin `/model-catalog`, and verifies explicit failure before first
 sync, shared-model visibility, an empty catalog and detail 404 when all owners
 are denied, restart persistence, and unchanged 3:1 subset weights. Unit tests
@@ -104,15 +105,32 @@ cover exclusive/shared owners, category and individual denial precedence,
 disabled owners, every supported list format, group merges, policy hot updates,
 missing/incomplete directories, immutable indexes, transactional persistence,
 durable receipts, corruption, and uncertain durability. These reads make no
-upstream requests and reserve no concurrency.
+upstream requests and reserve no concurrency. The real fixture also reloads a
+valid format-1 0.1.8/v8.0.32 catalog, checks unchanged disk bytes and provenance,
+publishes revision 8 after revision 7, restarts, replays the old durable receipt,
+and verifies that policy state is unchanged. Unit fixtures cover old-envelope
+rejection on new writes, stale/conflicting retries and failed/uncertain upgrade writes.
 
 The Edge fixture checks automatic management-session catalog sync, registered
-public prefixes, credential-only list/detail restrictions, and failure of a
-per-credential read without a partial catalog publication. Directory unit tests
+public prefixes, exclusions, file/config/keyless/disabled credentials, actual
+relative file IDs and distinct IDs sharing an auth_index. Failed Host reads and
+model-set changes during double-read do not partially publish a catalog. Directory unit tests
 verify actual file/config auth IDs instead of auth_index, rejection of malformed
 model responses, and absence of secrets, auth IDs and display data in snapshots.
 Generation admission remains the authoritative restriction; no live DSH profile
-or external provider credentials are used by these fixtures.
+or external provider credentials are used by these fixtures. Opening the panel
+and ordinary sync send zero source-refresh requests. Explicit refresh is tested
+against the real local-model route, plus refresh failure and post-refresh sync
+failure; each click sends one POST and retains the verification draft.
+The post-review fixture also creates an AIStudio runtime-only credential over
+`/v1/ws`, disables it through the official status route, and checks that CPA hides
+its metadata while the Host retains its empty model set. Synchronization excludes
+that non-owner, preserves all known entries and shows the exclusion count after
+ordinary sync and the final refresh notice, plus the health area. Changes to the
+excluded entry's index or empty-to-nonempty model set between reads must preserve
+the old catalog. Directory regressions additionally cover invalid/duplicate
+model-free entries, known metadata mismatches, missing Host coverage and all
+excluded-identity additions/removals/changes.
 
 ## Browser verification and preview
 
@@ -138,7 +156,7 @@ frames are tested at the CPA translator callback boundary; the plugin
 does not infer missing boundaries from arbitrary byte fragments.
 
 Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
-Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.32
+Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.45
 Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
 `cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
 Replace older trial binaries with the current target before running this test.
@@ -156,7 +174,7 @@ transactional reconfiguration. Ordinary upstream traffic is not used.
 
 ```powershell
 npm ci
-$env:CPA_BINARY = 'C:\path\to\v8.0.32\cli-proxy-api.exe'
+$env:CPA_BINARY = 'C:\path\to\v8.0.45\cli-proxy-api.exe'
 npm run test:ui
 npm run preview
 ```
@@ -164,8 +182,9 @@ npm run preview
 `npm run test:directory` checks v8 grouped credentials, host `auth_index`, shared
 indexes, duplicate keys, group inheritance, keyless providers, file credentials,
 invalid indexes and secret masking. The real CPA fixture verifies the configured
-credential ID bridge with actual subset routing; v8.0.32's file directory omits
-configured credentials and scheduler hooks do not expose their indexes.
+credential metadata bridge against the actual Host model fingerprints and subset
+routing. v8.0.45's inventory omits some configured/disabled runtime credentials;
+the model callback lacks source/status. Neither can silently replace the other.
 The browser fixture rejects deprecated host API calls and verifies v8 config
 PUT, mapping deletion, preservation of sibling settings, MiB-to-byte conversion and reload.
 It also loads a legacy `api-key-entries: null` keyless group, asserts the real v8
@@ -173,7 +192,7 @@ It also loads a legacy `api-key-entries: null` keyless group, asserts the real v
 A Claude credential with an own `__proto__` header is selected using the browser's
 directory adapter: allow must reach the mock upstream, deny must return a 503
 routing error without reaching it. After asserting successful null-list discovery,
-the fixture normalizes its list to `[]`: CPA v8.0.32 reads legacy null lists but
+the fixture normalizes its list to `[]`: CPA v8.0.45 reads legacy null lists but
 rejects them when validating v8 configuration writes. Directory unit tests additionally
 cover inherited and per-key prototype-named headers for Claude/Codex and reject
 malformed credential lists other than the supported keyless null value.
@@ -214,3 +233,10 @@ Keep the entire compiler directory in a path without spaces: WinLibs GCC 16.2.0
 expands 8.3 aliases before passing its manifest-object path to the linker, so a
 short alias alone does not fix race-test linking from a directory with spaces.
 The Linux artifact built on Debian bookworm targets glibc systems, not musl/Alpine.
+
+## v8.0.45 acceptance record
+
+See [cpa-v8.0.45-verification.md](cpa-v8.0.45-verification.md) for the actual
+2026-10-28 Windows/UCRT results and A-01–A-15 evidence. Go 1.26.10 is the minimum
+for the pinned SDK. Docker/Linux, real Codex-client and live deployment/provider
+checks were not rerun for this target; their historical results do not certify it.

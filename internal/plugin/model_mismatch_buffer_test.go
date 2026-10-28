@@ -140,6 +140,30 @@ func TestResponsesBufferLimitFailsClosed(t *testing.T) {
 	}
 }
 
+func TestResponsesLargeHostChunkPreservesVerifiedOutput(t *testing.T) {
+	for _, combined := range []bool{false, true} {
+		a := mismatchApp(t)
+		beginCheck(t, a, "r", "request", true)
+		rawModel(t, a, "request", `{"response":{"model":"client-model"}}`)
+		prefix := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + strings.Repeat("x", 192*1024) + "\"}\n\n"
+		terminal := "data: {\"type\":\"response.completed\"}\n\n"
+		chunk := terminal
+		if combined {
+			chunk = prefix + terminal
+		} else if !bufferedChunk(t, a, "r", prefix).DropChunk {
+			t.Fatal("large nonterminal chunk escaped before verification")
+		}
+		out := bufferedChunk(t, a, "r", chunk)
+		if out.DropChunk || string(out.Body) != prefix+terminal {
+			t.Fatalf("large host chunk changed: combined=%t drop=%t bytes=%d", combined, out.DropChunk, len(out.Body))
+		}
+		a.completeModelMismatch("r")
+		if a.responseBufferBytes != 0 || a.modelMismatchActive() != 0 {
+			t.Fatal("large chunk retained lifecycle state")
+		}
+	}
+}
+
 func TestResponsesTotalBufferLimitAndCompletionAccounting(t *testing.T) {
 	a := mismatchApp(t)
 	a.modelMismatch.MaxBufferBytes = 2 * 1024 * 1024

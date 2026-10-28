@@ -22,7 +22,7 @@ func TestModelListFilterReconfiguration(t *testing.T) {
 			setting = "true"
 		}
 		configYAML := "state_dir: " + a.stateDir + "\nmodel_list_filter_enabled: " + setting
-		invoke(t, a, pluginabi.MethodPluginReconfigure, lifecycle{SchemaVersion: 6, ConfigYAML: []byte(configYAML)})
+		invoke(t, a, pluginabi.MethodPluginReconfigure, lifecycle{SchemaVersion: pluginabi.SchemaVersion, ConfigYAML: []byte(configYAML)})
 		resp := listResponse(t, a, req)
 		if !enabled && len(resp.Body) != 0 {
 			t.Fatal("disabled filter changed response")
