@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPA Helper Plugin</title><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script defer src="lucide.js"></script><script defer src="sha256.js"></script><script defer src="directory.js"></script><script defer src="app.js"></script></head>
 <body>
-<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span id="plugin-version">PLUGIN / 0.1.8</span></div></div></header>
+<header><div class="brand"><img src="logo.svg" width="32" height="32" alt=""><div><strong>CPA Helper</strong><span id="plugin-version">PLUGIN / 0.1.9</span></div></div></header>
 <main>
 <div class="header-actions"><span id="connection" class="status">未连接</span><button id="refresh" class="icon" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button><a href="/management.html" target="_top">CPA 管理面板</a></div>
 <p id="message" role="status" aria-live="polite" hidden></p>
@@ -11,7 +11,7 @@
 <nav aria-label="视图"><button data-tab="keys" aria-selected="true">API Keys <span id="key-count">0</span></button><button data-tab="groups" aria-selected="false">路由规则 <span id="group-count">0</span></button><button data-tab="verification" aria-selected="false">响应核验</button><button data-tab="health" aria-selected="false">运行状态</button></nav>
 <section id="keys-view"><div class="toolbar"><label class="search"><i data-lucide="search"></i><input id="key-search" type="search" placeholder="搜索 Key 或备注" aria-label="搜索 Key"></label><button id="sync"><i data-lucide="refresh-cw"></i>同步 CPA 目录</button></div><div class="table-wrap"><table class="keys-table"><colgroup><col class="key-column"><col class="status-column"><col class="rules-column"><col class="concurrency-column"><col class="edit-column"></colgroup><thead><tr><th>API KEY</th><th>状态</th><th>路由规则</th><th>并发</th><th></th></tr></thead><tbody id="key-rows"></tbody></table></div><p class="empty" id="keys-empty">暂无 API Key</p></section>
 <section id="groups-view" hidden><div class="toolbar"><h2>路由规则</h2><button id="add-group"><i data-lucide="plus"></i>新建规则</button></div><div id="group-list"></div><p class="empty" id="groups-empty">暂无路由规则</p></section>
-<section id="health-view" hidden><p>修改 CPA 凭据或模型配置后，请点击“同步 CPA 目录”。目录同步失败会保留上次有效结果。</p><dl id="health-details"></dl></section>
+<section id="health-view" hidden><p>修改 CPA 凭据或模型配置后，请点击“同步 CPA 目录”。需要重新读取 CPA 模型来源时，可主动刷新后同步；打开页面不会自动刷新模型来源。同步失败不会发布部分目录。</p><button id="refresh-models"><i data-lucide="refresh-cw"></i>刷新 CPA 模型并同步</button><p id="catalog-excluded" hidden></p><dl id="health-details"></dl></section>
 <section id="verification-view" hidden>
 <form id="verification-form" class="verification-form">
 <div><h2>上游响应模型核验</h2><p>比较客户端请求模型与上游声明的模型。发现不一致时拦截结果并提醒客户端；无法证明上游声明本身真实。</p></div>

@@ -1,4 +1,4 @@
-/* CPA v8.0.32 directory adapter; see docs/compatibility.md for the ID bridge. */
+/* CPA v8.0.45 metadata adapter; model ownership always comes from host.auth.models. */
 "use strict";
 function cpaCredentialDirectory(config, directory) {
   if (!directory || !Array.isArray(directory.files)) throw new Error("CPA 凭据目录格式错误");
@@ -48,8 +48,8 @@ function cpaCredentialDirectory(config, directory) {
             seen.add(dedup);
           }
         }
-        // Config credentials are absent from /credentials and scheduler hooks
-        // expose ID, not auth_index. Keep this pinned bridge until CPA exposes both.
+        // CPA omits some config/disabled entries from its file inventory. This
+        // bridge supplies metadata only; host.auth.models must confirm each ID.
         const idBase = kind + ":" + sha256(kind + parts.map(p => "\0" + trim(p)).join("")).slice(0, 12);
         const count = counters.get(idBase) || 0; counters.set(idBase, count + 1);
         const id = idBase + (count ? "-" + count : "");
@@ -81,18 +81,40 @@ function cpaCredentialDirectory(config, directory) {
   return [...files, ...configured.values()];
 }
 
+// Keep even model-free Host identities in double-read comparisons.
+function cpaRegisteredModels(registered) {
+  if (!registered || !Array.isArray(registered.credentials)) throw new Error("CPA 凭据模型目录格式错误");
+  const validText = value => typeof value === "string" && value.trim() && value === value.trim() && !/[\0\r\n\t]/.test(value);
+  const seen = new Set();
+  return registered.credentials.map(entry => {
+    if (!entry || typeof entry.ref !== "string" || !/^sha256:[0-9a-f]{64}$/.test(entry.ref) || seen.has(entry.ref) || !validText(entry.auth_index) || !validText(entry.provider) || entry.provider !== entry.provider.toLowerCase() || !Array.isArray(entry.models) || entry.models.some(model => !validText(model))) throw new Error("CPA 凭据模型目录格式错误");
+    seen.add(entry.ref);
+    const models = [...new Map(entry.models.map(model => [model.toLowerCase(), model])).values()].sort();
+    return { ref: entry.ref, auth_index: entry.auth_index, provider: entry.provider, models };
+  }).sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
 // Only registered public IDs and routing attributes cross the storage boundary.
-async function cpaModelCatalog(credentials, envelope, loadModels) {
-  const entries = await Promise.all(credentials.map(async credential => {
-    const result = await loadModels(credential.auth_id);
-    if (!result || !Array.isArray(result.models) || result.models.some(model => !model || typeof model.id !== "string" || !model.id.trim() || model.id !== model.id.trim() || /[\0\r\n\t]/.test(model.id))) throw new Error("CPA 凭据模型目录格式错误");
-    const models = [...new Map(result.models.map(model => [model.id.toLowerCase(), model.id])).values()].sort();
-    return { ref: credential.ref, source: credential.source, provider: credential.provider, enabled: credential.status !== "disabled", models };
-  }));
+function cpaModelCatalog(credentials, envelope, registered) {
+  const metadata = new Map();
+  for (const credential of credentials) {
+    if (metadata.has(credential.ref)) throw new Error("CPA 凭据元数据存在重复标识");
+    metadata.set(credential.ref, credential);
+  }
+  const seen = new Set(), entries = [];
+  for (const entry of cpaRegisteredModels(registered)) {
+    const credential = metadata.get(entry.ref);
+    // A Host-only empty set owns no models. Do not invent source/status for it.
+    if (!credential && entry.models.length === 0) continue;
+    if (!credential || !entry.auth_index || entry.auth_index !== credential.auth_index || entry.provider !== credential.provider || !["auth-files", "ai-providers"].includes(credential.source)) throw new Error("CPA 注册凭据与元数据不一致，请重新同步");
+    seen.add(entry.ref);
+    entries.push({ ref: entry.ref, source: credential.source, provider: entry.provider, enabled: credential.status !== "disabled", models: entry.models });
+  }
+  if (seen.size !== metadata.size) throw new Error("CPA 凭据元数据未被宿主注册目录完整覆盖，请重新同步");
   return { ...envelope, credentials: entries };
 }
 
 // Ignore observation timestamps and transient cooldowns when checking identities.
 function cpaDirectoryIdentity(credentials) {
-  return JSON.stringify(credentials.map(({ ref, auth_id, source, provider, status }) => ({ ref, auth_id, source, provider, enabled: status !== "disabled" })).sort((a, b) => a.ref.localeCompare(b.ref)));
+  return JSON.stringify(credentials.map(({ ref, auth_index, source, provider, status }) => ({ ref, auth_index, source, provider, enabled: status !== "disabled" })).sort((a, b) => a.ref.localeCompare(b.ref)));
 }

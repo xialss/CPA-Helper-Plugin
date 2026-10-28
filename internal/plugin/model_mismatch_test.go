@@ -300,11 +300,14 @@ func TestDisabledDuplicateCannotContaminateEnabledRequest(t *testing.T) {
 }
 
 func TestExactHostSchemaRequired(t *testing.T) {
-	for _, version := range []uint32{0, 4, 5, 7} {
+	for _, version := range []uint32{0, 4, 5, 6, 8} {
 		a := New(nil)
 		raw, _ := json.Marshal(lifecycle{SchemaVersion: version})
 		if _, err := a.Handle(pluginabi.MethodPluginRegister, raw); err == nil {
 			t.Fatalf("accepted schema %d", version)
+		}
+		if a.currentStore() != nil {
+			t.Fatal("unsupported schema opened persistent state")
 		}
 	}
 }

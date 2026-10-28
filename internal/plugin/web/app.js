@@ -6,10 +6,12 @@
   let token = "", snapshot = null, health = null, dirty = false, busy = false, editing = null, session = 0;
   let keys = [], credentials = [], models = [], verification = null, verificationDirty = false;
   let pluginVersion = "", cpaVersion = "";
+  let catalogSync = null;
   const clone = value => structuredClone(value);
   const icons = () => lucide.createIcons();
   const unique = values => [...new Set(values)].sort();
   const maskKey = value => !value ? "" : value.length > 10 ? value.slice(0, 6) + "..." + value.slice(-4) : "***";
+  const catalogExclusionNote = count => count ? `（排除 ${count} 个缺少元数据的无模型条目）` : "";
   function panelValue(name) {
     let raw = localStorage.getItem(name);
     if (!raw) return null;
@@ -46,7 +48,7 @@
     try { await fn(); } catch (e) { notice(e.message, true); } finally { busy = false; updateButtons(); }
   }
   function updateButtons() {
-    for (const id of ["refresh", "sync", "add-group"]) $(id).disabled = busy || !snapshot;
+    for (const id of ["refresh", "sync", "refresh-models", "add-group"]) $(id).disabled = busy || !snapshot;
     for (const control of $("editor-form").querySelectorAll("input, select, button")) control.disabled = busy;
     for (const control of $("verification-form").querySelectorAll("input, select, textarea, button")) control.disabled = busy || !verification;
   }
@@ -131,18 +133,19 @@
     });
   };
   async function syncDirectory() {
-    const [config, directory, current] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/model-catalog")]);
+    const [config, directory, current, registered] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/model-catalog"), api(base + "/credential-models")]);
     const rawKeys = config.access?.["api-keys"] ?? [];
     if (!Array.isArray(rawKeys) || rawKeys.some(k => typeof k !== "string")) throw new Error("CPA API Key 目录格式错误");
     const nextCredentials = cpaCredentialDirectory(config, directory);
     const revision = current.health?.catalog_revision;
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("插件模型目录修订无效");
-    const next = await cpaModelCatalog(nextCredentials, {
+    const next = cpaModelCatalog(nextCredentials, {
       contract_version: "v1", plugin_version: pluginVersion, cpa_version: cpaVersion,
       catalog_revision: revision + 1, generated_at: new Date().toISOString(),
-    }, id => api("/v8/management/credentials/models?name=" + encodeURIComponent(id)));
-    const [latestConfig, latestDirectory] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials")]);
-    if (JSON.stringify(config) !== JSON.stringify(latestConfig) || cpaDirectoryIdentity(nextCredentials) !== cpaDirectoryIdentity(cpaCredentialDirectory(latestConfig, latestDirectory))) throw new Error("同步期间 CPA 配置或凭据已变化，请重新同步");
+    }, registered);
+    const [latestConfig, latestDirectory, latestRegistered] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/credential-models")]);
+    const latestCredentials = cpaCredentialDirectory(latestConfig, latestDirectory);
+    if (JSON.stringify(config) !== JSON.stringify(latestConfig) || cpaDirectoryIdentity(nextCredentials) !== cpaDirectoryIdentity(latestCredentials) || JSON.stringify(cpaRegisteredModels(registered)) !== JSON.stringify(cpaRegisteredModels(latestRegistered)) || JSON.stringify(next.credentials) !== JSON.stringify(cpaModelCatalog(latestCredentials, {}, latestRegistered).credentials)) throw new Error("同步期间 CPA 配置、凭据或注册模型已变化，请重新同步");
     const accepted = await api(base + "/model-catalog", { method: "PUT", body: next, headers: { "If-Match": String(revision), "Idempotency-Key": newID() } });
     if (accepted.catalog_revision !== next.catalog_revision) throw new Error("模型目录保存响应修订不一致");
     const nextHealth = await api(base + "/health");
@@ -151,8 +154,21 @@
     credentials = nextCredentials;
     models = unique(next.credentials.flatMap(c => c.models));
     health = nextHealth;
+    const excludedCount = registered.credentials.length - next.credentials.length;
+    catalogSync = { revision: next.catalog_revision, excludedCount };
     render();
-    notice("CPA 目录已同步");
+    notice("CPA 目录已同步" + catalogExclusionNote(excludedCount));
+    return excludedCount;
+  }
+  async function refreshModelsAndSync() {
+    notice("正在刷新 CPA 模型来源…");
+    const result = await api("/v8/management/models/refresh", { method: "POST" });
+    if (result.ok !== true) throw new Error("CPA 模型刷新未成功，请检查 CPA 状态");
+    notice("CPA 模型已刷新，正在同步插件目录…");
+    let excludedCount;
+    try { excludedCount = await syncDirectory(); }
+    catch (error) { throw new Error("CPA 模型已刷新，但插件目录尚未确认同步生效，请检查运行状态：" + error.message); }
+    notice("CPA 模型已刷新，插件目录已同步并生效" + catalogExclusionNote(excludedCount));
   }
   function render() {
     if (!snapshot) return;
@@ -180,7 +196,10 @@
     $("groups-empty").hidden = snapshot.groups.length > 0;
     $("health-details").replaceChildren();
     for (const [label, value] of [["状态", health.status], ["契约", health.contract_version], ["插件版本", health.plugin_version], ["最近同步", new Date(health.accepted_at).toLocaleString()], ["当前并发", Object.values(health.active || {}).reduce((a, b) => a + b, 0)], ["最近错误", health.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
-    if (health.model_catalog) for (const [label, value] of [["模型目录状态", health.model_catalog.status], ["模型目录修订", health.model_catalog.catalog_revision], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    if (health.model_catalog) for (const [label, value] of [["模型目录状态", health.model_catalog.status], ["模型目录修订", health.model_catalog.catalog_revision], ["模型目录来源", health.model_catalog.cpa_version ? `${health.model_catalog.cpa_version} / 插件 ${health.model_catalog.plugin_version}${health.model_catalog.refresh_required ? "（需要重新同步）" : ""}` : "尚未同步"], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    const excludedCount = catalogSync && catalogSync.revision === health.model_catalog?.catalog_revision ? catalogSync.excludedCount : 0;
+    $("catalog-excluded").hidden = !excludedCount;
+    $("catalog-excluded").textContent = excludedCount ? `本次目录同步排除 ${excludedCount} 个缺少元数据且未注册模型的 Host 条目；它们不参与模型归属判断。` : "";
     updateButtons(); icons();
   }
   function choiceList(container, choices, allowName, denyName, object = false) {
@@ -265,6 +284,7 @@
     await load(); notice("已刷新");
   });
   $("sync").onclick = () => action(syncDirectory);
+  $("refresh-models").onclick = () => action(refreshModelsAndSync);
   $("add-group").onclick = () => openEditor("group", { id: newID(), name: "", rule: {} });
   $("key-search").oninput = render;
   for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => { for (const tab of document.querySelectorAll("[data-tab]")) { const selected = tab === b; tab.setAttribute("aria-selected", String(selected)); $(tab.dataset.tab + "-view").hidden = !selected; } };

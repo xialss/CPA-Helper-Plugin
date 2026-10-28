@@ -97,29 +97,74 @@ test('keyless null lists follow the v8 management contract without accepting mal
   assert.throws(() => directory({ 'api-keys': { codex: [{ keys: null }] } }, []), /CPA/);
 });
 
-test('model catalog queries actual auth IDs and persists only public IDs and routing attributes', async () => {
+test('model catalog joins authoritative host fingerprints and persists only routing attributes', () => {
   const credentials = directory({ 'api-keys': { 'openai-compatibility': [
     { name: 'catalog', 'base-url': 'https://catalog.invalid', keys: [{ 'api-key': 'private-upstream-secret', auth_index: 'config-index' }] },
   ] } }, [{ id: 'oauth-fixture.json', auth_index: 'file-index', provider: 'codex', source: 'file', weight: 0 }]);
-  const queried = [];
-  const result = await context.cpaModelCatalog(credentials, { contract_version: 'v1', plugin_version: '0.1.8', cpa_version: 'v8.0.32', catalog_revision: 1 }, async id => {
-    queried.push(id);
-    return { models: [{ id: 'team/public-alias', owned_by: 'unrelated-provider' }, { id: 'shared' }] };
-  });
-  assert.deepEqual(queried, credentials.map(c => c.auth_id));
-  assert(!queried.includes('config-index') && !queried.includes('file-index'));
+  const registered = { credentials: credentials.map(c => ({ ref: c.ref, auth_index: c.auth_index, provider: c.provider, models: ['team/public-alias', 'shared'] })) };
+  const result = context.cpaModelCatalog(credentials, { contract_version: 'v1', plugin_version: '0.1.9', cpa_version: 'v8.0.45', catalog_revision: 1 }, registered);
   const stored = JSON.parse(JSON.stringify(result));
   assert.equal(stored.credentials.find(c => c.source === 'auth-files').enabled, false);
   assert.deepEqual(stored.credentials[0].models, ['shared', 'team/public-alias']);
   assert.doesNotMatch(JSON.stringify(stored), /private-upstream-secret|auth_id|auth_index|oauth-fixture.json|owned_by|label/);
 });
 
-test('failed and malformed model queries reject the complete synchronization', async () => {
-  const credentials = directory({}, [{ id: 'oauth.json', auth_index: 'idx', provider: 'claude', source: 'file' }]);
-  for (const result of [{}, { models: null }, { models: [{}] }, { models: [{ id: 'bad\nmodel' }] }]) {
-    await assert.rejects(context.cpaModelCatalog(credentials, {}, async () => result), /CPA/);
+test('host-only model-free credentials do not block a complete ownership catalog', () => {
+  const credentials = directory({}, [{ id: 'known.json', auth_index: 'known', provider: 'codex', source: 'file' }]);
+  const known = { ref: credentials[0].ref, auth_index: 'known', provider: 'codex', models: [] };
+  const omitted = { ref: ref('disabled-runtime-only'), auth_index: 'runtime-index', provider: 'aistudio', models: [] };
+  const result = JSON.parse(JSON.stringify(context.cpaModelCatalog(credentials, {}, { credentials: [known, omitted] })));
+  assert.deepEqual(result.credentials, [{ ref: known.ref, source: 'auth-files', provider: 'codex', enabled: true, models: [] }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.cpaModelCatalog([], {}, { credentials: [omitted] }))), { credentials: [] });
+});
+
+test('model-free exclusions never hide malformed, duplicate or mismatched identities', () => {
+  const omitted = { ref: ref('runtime-only'), auth_index: 'runtime-index', provider: 'aistudio', models: [] };
+  for (const change of [{ ref: 'invalid' }, { auth_index: '' }, { auth_index: null }, { auth_index: 'bad\nindex' }, { provider: '' }, { provider: null }, { provider: 'Aistudio' }, { models: null }, { models: ['model'] }]) {
+    assert.throws(() => context.cpaModelCatalog([], {}, { credentials: [{ ...omitted, ...change }] }), /CPA/);
   }
-  await assert.rejects(context.cpaModelCatalog(credentials, {}, async () => { throw new Error('host unavailable'); }), /host unavailable/);
+  assert.throws(() => context.cpaModelCatalog([], {}, { credentials: [omitted, omitted] }), /CPA/);
+  const credentials = directory({}, [{ id: 'known.json', auth_index: 'known', provider: 'codex', source: 'file' }]);
+  const known = { ref: credentials[0].ref, auth_index: 'known', provider: 'codex', models: [] };
+  for (const change of [{ auth_index: 'other' }, { provider: 'claude' }]) {
+    assert.throws(() => context.cpaModelCatalog(credentials, {}, { credentials: [{ ...known, ...change }, omitted] }), /CPA/);
+  }
+  assert.throws(() => context.cpaModelCatalog(credentials, {}, { credentials: [omitted] }), /CPA/);
+});
+
+test('normalized Host identity retains all excluded model-free entries for double reads', () => {
+  const known = { ref: ref('known'), auth_index: 'known', provider: 'codex', models: ['shared', 'team/alias'] };
+  const omitted = { ref: ref('runtime-only'), auth_index: 'runtime-index', provider: 'aistudio', models: [] };
+  const identity = registered => JSON.stringify(context.cpaRegisteredModels({ credentials: registered }));
+  const before = identity([known, omitted]);
+  assert.equal(identity([omitted, { ...known, models: ['team/alias', 'shared'] }]), before);
+  for (const change of [{ ref: ref('different-runtime-only') }, { auth_index: 'other' }, { provider: 'codex' }, { models: ['new-owner'] }]) {
+    assert.notEqual(identity([known, { ...omitted, ...change }]), before);
+  }
+  assert.notEqual(identity([known]), before);
+  assert.notEqual(identity([known, omitted, { ...omitted, ref: ref('another'), auth_index: 'another' }]), before);
+});
+
+test('missing, malformed and unconfirmed host models reject the complete synchronization', () => {
+  const credentials = directory({}, [{ id: 'oauth.json', auth_index: 'idx', provider: 'claude', source: 'file' }]);
+  const entry = { ref: credentials[0].ref, auth_index: 'idx', provider: 'claude', models: ['model'] };
+  for (const result of [{}, { credentials: null }, { credentials: [] }, { credentials: [{}] }, { credentials: [{ ...entry, models: null }] }, { credentials: [{ ...entry, models: ['bad\nmodel'] }] }, { credentials: [entry, entry] }, { credentials: [{ ...entry, ref: ref('different-runtime-id') }] }, { credentials: [{ ...entry, auth_index: 'different-index' }] }, { credentials: [{ ...entry, provider: 'codex' }] }]) {
+    assert.throws(() => context.cpaModelCatalog(credentials, {}, result), /CPA/);
+  }
+});
+
+test('shared indexes retain distinct host identities and model-set changes remain observable', () => {
+  const credentials = directory({}, [
+    { id: 'a', auth_index: 'shared', provider: 'codex', source: 'memory', status: 'active' },
+    { id: 'b', auth_index: 'shared', provider: 'codex', source: 'memory', disabled: true },
+  ]);
+  const registered = { credentials: credentials.map(c => ({ ref: c.ref, auth_index: c.auth_index, provider: c.provider, models: ['team/alias', 'shared'] })) };
+  const first = JSON.stringify(context.cpaModelCatalog(credentials, {}, registered));
+  assert.equal(context.cpaModelCatalog(credentials, {}, registered).credentials.length, 2);
+  registered.credentials.reverse();
+  assert.equal(JSON.stringify(context.cpaModelCatalog(credentials, {}, registered)), first);
+  registered.credentials[0].models.push('new-model');
+  assert.notEqual(JSON.stringify(context.cpaModelCatalog(credentials, {}, registered)), first);
 });
 
 test('directory identity ignores ordering and transient errors but detects routing changes', () => {

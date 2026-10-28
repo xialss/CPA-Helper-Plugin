@@ -12,6 +12,7 @@ import (
 
 	"cpa-helper-plugin/internal/policy"
 	"cpa-helper-plugin/internal/snapshot"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
@@ -25,7 +26,7 @@ type managementRequest struct {
 
 func managementRegistration() any {
 	routes := []pluginapi.ManagementRoute{}
-	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"GET", "/model-catalog"}, {"PUT", "/model-catalog"}, {"POST", "/response-model/validate"}} {
+	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"GET", "/credential-models"}, {"GET", "/model-catalog"}, {"PUT", "/model-catalog"}, {"POST", "/response-model/validate"}} {
 		routes = append(routes, pluginapi.ManagementRoute{Method: r[0], Path: BasePath + r[1]})
 	}
 	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}, {Path: "/directory.js"}}
@@ -104,7 +105,7 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		return
 	}
 	if r.Method == "GET" && path == "/capabilities" {
-		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": 1, "schema_version": 6, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "response_model_mismatch": a.modelMismatchSettings(), "modules": []string{"model_rules", "model_list_filter", "response_model_mismatch", "credential_routes", "concurrency"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
+		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": pluginabi.ABIVersion, "schema_version": pluginabi.SchemaVersion, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "response_model_mismatch": a.modelMismatchSettings(), "modules": []string{"model_rules", "model_list_filter", "response_model_mismatch", "credential_routes", "concurrency"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
 		return
 	}
 	s := a.currentStore()
@@ -162,6 +163,13 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		jsonResponse(w, 200, p)
 	case "GET /directory":
 		items, err := a.directory(callback)
+		if err != nil {
+			problem(w, 502, "host_unavailable", err.Error())
+			return
+		}
+		jsonResponse(w, 200, map[string]any{"credentials": items})
+	case "GET /credential-models":
+		items, err := a.registeredCredentialModels(callback)
 		if err != nil {
 			problem(w, 502, "host_unavailable", err.Error())
 			return

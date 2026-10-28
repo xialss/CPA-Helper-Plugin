@@ -29,6 +29,9 @@ func configured(t *testing.T) *App {
 	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || !registration.Capabilities["response_stream_interceptor"] || registration.SchemaVersion != pluginabi.SchemaVersion {
 		t.Fatal("invalid CPA registration")
 	}
+	if registration.SchemaVersion != 7 || !registration.Capabilities["request_interceptor_omit_body_after"] || registration.Capabilities["request_interceptor_omit_body_before"] {
+		t.Fatal("schema 7 must omit only the unused after-auth body")
+	}
 	return a
 }
 

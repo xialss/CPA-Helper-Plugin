@@ -98,6 +98,29 @@ func TestCatalogIndexDoesNotRetainMutableInput(t *testing.T) {
 	}
 }
 
+func TestStoredCatalogCompatibilityIsReadOnlyAndNarrow(t *testing.T) {
+	p := testCatalog()
+	p.PluginVersion, p.CPAVersion = "0.1.8", "v8.0.32"
+	if _, err := CompileStored(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(p); err == nil {
+		t.Fatal("legacy snapshot accepted as a new write")
+	}
+	for _, mutate := range []func(*Snapshot){
+		func(s *Snapshot) { s.CPAVersion = "v8.0.29" },
+		func(s *Snapshot) { s.PluginVersion = "0.1.7" },
+		func(s *Snapshot) { s.ContractVersion = "v2" },
+		func(s *Snapshot) { s.Credentials[0].Models = nil },
+	} {
+		invalid := Clone(p)
+		mutate(&invalid)
+		if _, err := CompileStored(invalid); err == nil {
+			t.Fatal("compatibility read skipped validation")
+		}
+	}
+}
+
 func TestCatalogCredentialRequiresExplicitEnabledJSON(t *testing.T) {
 	fields := map[string]any{"ref": policy.CredentialRef("a"), "source": "ai-providers", "provider": "fixture", "models": []string{"alias"}}
 	for _, enabled := range []any{nil, false, true} {
