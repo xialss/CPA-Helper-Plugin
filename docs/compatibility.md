@@ -5,7 +5,7 @@ must be updated before any ABI-facing change.
 
 ## Current target: CPA v8.0.45
 
-Release candidate 0.1.10 targets CPA v8.0.45
+Plugin 0.1.10 targets CPA v8.0.45
 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`), C ABI 1 / RPC schema 7,
 with Go 1.26.10 or newer. It includes uniform Claude TTL and removes response
 verification. Policies from 0.1.0 through 0.1.9 remain readable; saved catalogs from
@@ -13,6 +13,10 @@ verification. Policies from 0.1.0 through 0.1.9 remain readable; saved catalogs 
 startup. New catalog publications require 0.1.10/v8.0.45. Back up state before
 upgrading; rollback restores compatible binaries and the pre-upgrade state.
 See [the release record](v0.1.10-release.md) for publication and artifact validation.
+It is released as [v0.1.10](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.10)
+from source `a8884145e881d43c49523b3e29a65a84104de309`. Both platform builds
+passed CI; the downloaded Windows DLL passed all three real CPA/TTL fixtures
+(40.469 seconds) and Edge smoke. Linux dynamic loading was not tested.
 
 The 0.1.10 implementation removes response model verification. It still targets
 CPA v8.0.45, C ABI 1 / RPC schema 7. It no longer registers raw-response or stream
@@ -391,7 +395,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | release candidate; validation in progress | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
+| 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
 | 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
 | 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |
 | 0.1.7 | v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Configuration defaults and disable/re-enable lifecycle contracts |

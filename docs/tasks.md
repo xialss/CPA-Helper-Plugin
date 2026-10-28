@@ -4,9 +4,9 @@
 
 - 用户授权：2026-10-28“提交并发布新版本”；范围为已完成的 TTL、响应核验移除、必要版本兼容、提交/推送及 GitHub release，不修改 CPA、Helper 或真实部署，不自动合并分支。
 - REL010-01 完成：版本/说明/schema/Helper 交接统一为 0.1.10，保留 v0.1.9 策略及目录读取并补升级回归；用户 AGENTS.md 和临时产物不纳入提交。
-- REL010-02 进行中：fmt/vet/test/race、目录 13/13、Edge、最终 DLL 三套真实 CPA fixture（51.668 秒）均通过；完成实际暂存审查后提交。
-- REL010-03 待办：推送提交及 v0.1.10 标签，等待现有 workflow 完成 Linux/Windows 构建和发布，补中文发布说明。
-- REL010-04 待办：下载正式产物核对 checksum、根目录及构建元数据，用发布 DLL 复核真实 CPA/TTL/界面，记录结果。
+- REL010-02 完成：fmt/vet/test/race、目录 13/13、Edge、最终 DLL 三套真实 CPA fixture（51.668 秒）均通过；暂存审查后提交 `a8884145e881d43c49523b3e29a65a84104de309`。
+- REL010-03 完成：分支及附注标签 v0.1.10 已推送；[workflow](https://github.com/xialss/CPA-Helper-Plugin/actions/runs/40700747573) 四个 job 全部成功；[正式 Release](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.10) 已发布为 Latest，中文说明已补齐。
+- REL010-04 完成：正式 3 项资产大小/digest/checksum、ZIP 单根库、Go/SDK/版本/源码 clean 元数据均通过；发布 DLL 三套真实 CPA/TTL fixture 40.469 秒和 Edge smoke 通过，详见发布记录。未部署 VPS、未做 Linux 动态加载或真实计费联调。
 - 本轮记录：[v0.1.10](v0.1.10-release.md)。此前“未发布/不提交”是各实施阶段的历史边界，本轮授权以上述发布任务为准。
 
 ## 当前实施：移除响应模型核验

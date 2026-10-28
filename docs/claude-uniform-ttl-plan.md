@@ -10,6 +10,7 @@
 | P4 | Plugin Key 编辑器与健康/能力展示，Helper 对接契约与回滚说明 | 完成；Edge 保存/清除/失败保留草稿及桌面/窄屏验证通过 |
 | P5 | 单测、并发/race、真实 CPA 生产 DLL fixture、最终验收记录 | 完成；[验收记录](claude-uniform-ttl-verification.md)含命令、边界与未测项 |
 | P6 | 三位 subagent 审查、交叉复现与修复、最终产物回归及详细 Helper 交接 | 完成；[审查记录](claude-uniform-ttl-review.md)，P1/P3 均关闭；[Helper 交接](claude-uniform-ttl-helper-handoff.md)已核对当前代码 |
+| P7 | 用户另行授权提交和发布，版本/升级兼容、官方构建及正式产物验证 | 完成；v0.1.10 Latest，发布 DLL 三套真实 CPA/TTL fixture 与 Edge 通过；[发布记录](v0.1.10-release.md) |
 
 ## 依赖与检查点
 

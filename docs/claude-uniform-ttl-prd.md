@@ -1,6 +1,6 @@
 # Claude 单请求 TTL 控制 PRD
 
-更新：2026-10-28；状态：Plugin 实施及本机验收完成，进入 v0.1.10 发布验收。目标：CPA v8.0.45 / C ABI 1 / RPC schema 7。发布进度见 [v0.1.10 记录](v0.1.10-release.md)。
+更新：2026-10-28；状态：Plugin 实施、v0.1.10 发布及正式产物验证完成。目标：CPA v8.0.45 / C ABI 1 / RPC schema 7。证据见 [v0.1.10 记录](v0.1.10-release.md)。
 证据见[验收记录](claude-uniform-ttl-verification.md)。Helper 消费端属于独立工作区对接，未在本轮修改。
 
 ## 需求与边界
