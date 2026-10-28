@@ -22,8 +22,9 @@ Use `httptest` for generic management calls. The suite must verify:
 
 Keep a fixture pinned to the single current CPA release (v8.0.45). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
-completion cleanup and official management resource registration. V1 does not
-register a usage callback.
+completion cleanup and official management resource registration. Published 0.1.9
+has no usage callback; the 0.1.10 TTL feature registers the sole `usage.handle`
+observer for execution metadata.
 
 ## Required commands
 
@@ -38,6 +39,17 @@ Run the CPA fixture and management contract tests before changing `docs/compatib
 to mark a release supported.
 
 ## Real CPA fixture and management smoke test
+
+The optional, diagnostic-only Claude TTL feasibility fixture is documented in
+[claude-ttl-feasibility.md](claude-ttl-feasibility.md). It uses a separate probe
+under `integration/testdata/ttlprobe`, requires `CPA_TTL_PROBE_BINARY` as well as
+`CPA_BINARY`, and must never be installed in a real deployment. It proves both
+supported mechanisms and blocking counterexamples; a pass does not certify the
+original per-Key TTL and exact mixed-billing feature.
+The revised `TestClaudeUniformTTLFeasibility` checks the user-approved scope
+excluding mixed TTLs, using uniform final rules and a pure-TTL synthetic
+upstream. A pass verifies request TTL enforcement on the tested paths, not
+upstream acceptance or the proposed Helper metadata integration.
 
 Download the official plugin-enabled CPA v8.0.45 binary for the target platform.
 Build the plugin with a C compiler for the same architecture, then run:
@@ -61,14 +73,16 @@ rollback. The test stops its CPA process and removes temporary state at completi
 CPA itself can still perform its own background version checks.
 
 The current regression fixture verifies model detail filtering (allowed 200,
-hidden 404, unrestricted caller 200), Chat rejection with one explicit terminal
-error and CPA cancellation without appended success/truncation, and continued
-error reporting on a matching but genuinely truncated upstream stream.
-Unit fixtures cover rejection on the terminal chunk itself, multiple choices,
-missing/null finish reasons, and removal of content/tool calls/usage.
-Responses fixtures distinguish clean EOF after finish_reason (release buffered
-content with response.completed) from truncated EOF (error, no buffered content).
+hidden 404, unrestricted caller 200), and response passthrough despite legacy
+enabled/reject verification settings. Chat, Responses, Claude and Gemini retain
+the upstream output; missing or changed declared models are not rejected.
+Responses text must arrive before upstream completion, including Codex-originated
+requests. Responses fixtures distinguish clean EOF after finish_reason
+(`response.completed`) from truncated EOF (explicit error, no false completion).
 Both paths must release request accounting; client cancellation is also covered.
+Unit fixtures ensure legacy settings cannot restore raw/stream hooks, both
+request bodies are omitted, removed management/RPC methods return 404, and
+capabilities, health and registration no longer advertise verification.
 Terminal HTTP flush failures are not injected by this fixture.
 
 The current fixture also checks that `/v1/models` contains only the permitted
@@ -106,7 +120,7 @@ disabled owners, every supported list format, group merges, policy hot updates,
 missing/incomplete directories, immutable indexes, transactional persistence,
 durable receipts, corruption, and uncertain durability. These reads make no
 upstream requests and reserve no concurrency. The real fixture also reloads a
-valid format-1 0.1.8/v8.0.32 catalog, checks unchanged disk bytes and provenance,
+valid format-1 0.1.9/v8.0.45 and 0.1.8/v8.0.32 catalogs, checks unchanged disk bytes and provenance,
 publishes revision 8 after revision 7, restarts, replays the old durable receipt,
 and verifies that policy state is unchanged. Unit fixtures cover old-envelope
 rejection on new writes, stale/conflicting retries and failed/uncertain upgrade writes.
@@ -121,7 +135,8 @@ Generation admission remains the authoritative restriction; no live DSH profile
 or external provider credentials are used by these fixtures. Opening the panel
 and ordinary sync send zero source-refresh requests. Explicit refresh is tested
 against the real local-model route, plus refresh failure and post-refresh sync
-failure; each click sends one POST and retains the verification draft.
+failure; each click sends one POST and preserves the last accepted directory.
+Separate failed-save tests retain Key and TTL drafts.
 The post-review fixture also creates an AIStudio runtime-only credential over
 `/v1/ws`, disables it through the official status route, and checks that CPA hides
 its metadata while the Host retains its empty model set. Synchronization excludes
@@ -134,43 +149,11 @@ excluded-identity additions/removals/changes.
 
 ## Browser verification and preview
 
-Codex streaming rejection acceptance uses `npm run test:codex-verification`.
-Set `CODEX_TEST_BINARY` to the installed Codex executable (verified 0.155.1).
-It uses the same isolated Docker artifacts as the response UI test, synthetic
-credentials and a mock upstream that stays open until cancellation. It checks
-immediate mismatch, delayed mismatch and strict unknown rejection: one upstream
-request, cancellation, no automatic reconnection and a failed client turn.
-`CPA_PLUGIN_BINARY` optionally selects a different library; `--baseline` on the
-script reproduces the former retry bug against the old library. The client uses
-`--ignore-user-config`, read-only sandboxing and an empty temporary workspace;
-no real provider or deployment configuration is used.
-
-The Responses buffering regression additionally sends a complete synthetic tool
-call before a late model mismatch, and a matching initial model that changes at
-completion. Wire and real Codex checks assert that neither text nor tools escape;
-a matched response still completes. `--leak-baseline` reproduces early tool leakage
-against the previous library. Unit fixtures cover delimiterless native Codex data
-lines, Chat-to-Responses events, fragmented CRLF, buffer limits,
-non-Responses admission and per-chunk verification, upstream failure and cancellation. Native delimiterless
-frames are tested at the CPA translator callback boundary; the plugin
-does not infer missing boundaries from arbitrary byte fragments.
-
-Response-model acceptance uses `npm run test:response-ui`. Prerequisites: Docker
-Desktop, the local `golang:1.26-bookworm` image, Edge, and the official v8.0.45
-Linux binary at `dist/response-model-trial/cli-proxy-api` with this build's
-`cpa-helper-plugin.so` beside it. Verify downloaded release checksums first.
-Replace older trial binaries with the current target before running this test.
-The script creates its own temporary config, synthetic keys, mock upstream and
-container, then removes them. It does not replace the running CPA installation.
-Screenshots: `test-results/response-model-{desktop,mobile}.png`.
-It checks validated panel save, invalid input, refresh, restart persistence,
-an actual mismatch error/header and responsive layout.
-
-The Go real fixture additionally checks OpenAI Chat, Responses, Claude and Gemini
-HTTP/SSE delivery from a synthetic OpenAI upstream, suppressing mismatched content,
-explicit mappings and unknown rejection. Unit tests cover raw-vs-translated
-identity, exact matching, lifecycle cleanup, ambiguity, concurrent observation and
-transactional reconfiguration. Ordinary upstream traffic is not used.
+Response verification and its dedicated `test:response-ui` and
+`test:codex-verification` scripts have been removed. The ordinary Edge smoke starts
+with legacy enabled/reject YAML and verifies successful loading, absence of the
+editor/module/settings and a 404 from the removed validation route. Reload must
+not restore the feature or rewrite legacy YAML. No external provider is used.
 
 ```powershell
 npm ci
@@ -236,7 +219,27 @@ The Linux artifact built on Debian bookworm targets glibc systems, not musl/Alpi
 
 ## v8.0.45 acceptance record
 
+The 0.1.10 production TTL feature has an additional real-host fixture:
+
+```powershell
+$env:CPA_BINARY = 'absolute/path/to/cli-proxy-api.exe'
+$env:CPA_PLUGIN_BINARY = 'absolute/path/to/dist/cpa-helper-plugin.dll'
+go test ./integration -run '^TestClaudeUniformTTLProduction(TopLevel)?$' -v -count=1
+```
+
+It loads the production library into isolated CPA v8.0.45, installs the exact
+supported rules and uses synthetic keys/upstreams. It checks native Claude and
+Chat, streaming, both profiles, explicit empty breakpoints, concurrent callers,
+policy changes between failed/successful attempts, CPA fallback, exact stock
+execution joins, management auth, non-Claude isolation and configuration drift.
+The TopLevel suite covers automatic root controls (bare/5m/1h), conditionally
+matched root normalization, explicit mode, empty/absent root controls, both
+profiles and streaming. Existing rootless cases assert no root is introduced.
+It does not verify live Anthropic acceptance or the Helper billing consumer.
+
 See [cpa-v8.0.45-verification.md](cpa-v8.0.45-verification.md) for the actual
 2026-10-28 Windows/UCRT results and A-01–A-15 evidence. Go 1.26.10 is the minimum
 for the pinned SDK. Docker/Linux, real Codex-client and live deployment/provider
 checks were not rerun for this target; their historical results do not certify it.
+The subsequent response-verification removal and its final regression results
+are recorded separately in [response-verification-removal.md](response-verification-removal.md).

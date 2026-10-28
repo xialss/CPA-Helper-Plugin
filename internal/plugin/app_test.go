@@ -26,11 +26,11 @@ func configured(t *testing.T) *App {
 	if err := json.Unmarshal(env.Result, &registration); err != nil {
 		t.Fatal(err)
 	}
-	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || !registration.Capabilities["response_stream_interceptor"] || registration.SchemaVersion != pluginabi.SchemaVersion {
+	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || registration.Capabilities["response_stream_interceptor"] || registration.Capabilities["response_before_translator"] || registration.SchemaVersion != pluginabi.SchemaVersion {
 		t.Fatal("invalid CPA registration")
 	}
-	if registration.SchemaVersion != 7 || !registration.Capabilities["request_interceptor_omit_body_after"] || registration.Capabilities["request_interceptor_omit_body_before"] {
-		t.Fatal("schema 7 must omit only the unused after-auth body")
+	if registration.SchemaVersion != 7 || !registration.Capabilities["request_interceptor_omit_body_after"] || !registration.Capabilities["request_interceptor_omit_body_before"] {
+		t.Fatal("schema 7 must omit both unused request bodies")
 	}
 	return a
 }
@@ -172,7 +172,7 @@ func TestCPAReconfigureAfterQuiesceRestoresAdmission(t *testing.T) {
 	if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.StatusCode != 503 {
 		t.Fatal("quiesced instance admitted a request", resp)
 	}
-	configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true, ResponseModelMismatch: defaultModelMismatchConfig()})
+	configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestCPAShutdownClearsRequestAccounting(t *testing.T) {
 			if resp := interception(t, invoke(t, a, pluginabi.MethodRequestInterceptBefore, request)); resp.StatusCode != 503 {
 				t.Fatal("unloaded instance admitted a request", resp)
 			}
-			configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true, ModelListFilterEnabled: true, ResponseModelMismatch: defaultModelMismatchConfig()})
+			configYAML, err := yaml.Marshal(config{StateDir: a.stateDir, Enabled: true, ModelListFilterEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}

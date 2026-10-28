@@ -99,25 +99,29 @@ func TestCatalogIndexDoesNotRetainMutableInput(t *testing.T) {
 }
 
 func TestStoredCatalogCompatibilityIsReadOnlyAndNarrow(t *testing.T) {
-	p := testCatalog()
-	p.PluginVersion, p.CPAVersion = "0.1.8", "v8.0.32"
-	if _, err := CompileStored(p); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Compile(p); err == nil {
-		t.Fatal("legacy snapshot accepted as a new write")
-	}
-	for _, mutate := range []func(*Snapshot){
-		func(s *Snapshot) { s.CPAVersion = "v8.0.29" },
-		func(s *Snapshot) { s.PluginVersion = "0.1.7" },
-		func(s *Snapshot) { s.ContractVersion = "v2" },
-		func(s *Snapshot) { s.Credentials[0].Models = nil },
-	} {
-		invalid := Clone(p)
-		mutate(&invalid)
-		if _, err := CompileStored(invalid); err == nil {
-			t.Fatal("compatibility read skipped validation")
-		}
+	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}} {
+		t.Run(producer[0], func(t *testing.T) {
+			p := testCatalog()
+			p.PluginVersion, p.CPAVersion = producer[0], producer[1]
+			if _, err := CompileStored(p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Compile(p); err == nil {
+				t.Fatal("legacy snapshot accepted as a new write")
+			}
+			for _, mutate := range []func(*Snapshot){
+				func(s *Snapshot) { s.CPAVersion = "v8.0.29" },
+				func(s *Snapshot) { s.PluginVersion = "0.1.7" },
+				func(s *Snapshot) { s.ContractVersion = "v2" },
+				func(s *Snapshot) { s.Credentials[0].Models = nil },
+			} {
+				invalid := Clone(p)
+				mutate(&invalid)
+				if _, err := CompileStored(invalid); err == nil {
+					t.Fatal("compatibility read skipped validation")
+				}
+			}
+		})
 	}
 }
 

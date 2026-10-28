@@ -42,7 +42,6 @@ type HostCall func(method string, payload any) (json.RawMessage, error)
 type App struct {
 	mu                     sync.RWMutex
 	modelListFilterEnabled bool
-	modelMismatch          modelMismatchConfig
 	store                  *snapshot.Store
 	catalog                *snapshot.CatalogStore
 	stateDir               string
@@ -50,15 +49,12 @@ type App struct {
 	host                   HostCall
 	inventoryMu            sync.Mutex
 	credentials            map[string]credential
-	mismatchMu             sync.Mutex
-	modelMismatchStates    map[string]*modelMismatchState
-	mismatchRequests       map[[32]byte]map[string]bool
-	responseBufferBytes    int
+	ttl                    *claudeTTL
 }
 
 // New constructs a plugin before CPA registration supplies configuration.
 func New(host HostCall) *App {
-	return &App{modelListFilterEnabled: true, modelMismatch: defaultModelMismatchConfig(), runtime: run.New(), host: host, credentials: map[string]credential{}, modelMismatchStates: map[string]*modelMismatchState{}, mismatchRequests: map[[32]byte]map[string]bool{}}
+	return &App{modelListFilterEnabled: true, runtime: run.New(), host: host, credentials: map[string]credential{}, ttl: newClaudeTTL()}
 }
 
 type lifecycle struct {
@@ -66,12 +62,14 @@ type lifecycle struct {
 	SchemaVersion uint32 `json:"schema_version"`
 }
 type config struct {
-	ModelListFilterEnabled bool                `yaml:"model_list_filter_enabled"`
-	ResponseModelMismatch  modelMismatchConfig `yaml:"response_model_mismatch"`
-	StateDir               string              `yaml:"state_dir"`
-	Enabled                bool                `yaml:"enabled"`
-	Priority               int                 `yaml:"priority"`
-	Store                  yaml.Node           `yaml:"store"`
+	ModelListFilterEnabled bool            `yaml:"model_list_filter_enabled"`
+	ClaudeCacheTTL         claudeTTLConfig `yaml:"claude_cache_ttl"`
+	StateDir               string          `yaml:"state_dir"`
+	Enabled                bool            `yaml:"enabled"`
+	Priority               int             `yaml:"priority"`
+	Store                  yaml.Node       `yaml:"store"`
+	// Decode the removed setting only so an upgrade can load existing CPA YAML.
+	RemovedResponseModelMismatch yaml.Node `yaml:"response_model_mismatch,omitempty"`
 }
 type registration struct {
 	SchemaVersion uint32             `json:"schema_version"`
@@ -90,7 +88,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if req.SchemaVersion != pluginabi.SchemaVersion {
 			return nil, fmt.Errorf("CPA schema %d is required", pluginabi.SchemaVersion)
 		}
-		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true, ResponseModelMismatch: defaultModelMismatchConfig()}
+		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true}
 		if len(bytes.TrimSpace(req.ConfigYAML)) > 0 {
 			decoder := yaml.NewDecoder(bytes.NewReader(req.ConfigYAML))
 			decoder.KnownFields(true)
@@ -101,7 +99,8 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if strings.TrimSpace(cfg.StateDir) == "" {
 			return nil, errors.New("state_dir must not be empty")
 		}
-		if err := cfg.ResponseModelMismatch.Validate(); err != nil {
+		ttlGuard, err := validateTTLConfig(cfg.ClaudeCacheTTL)
+		if err != nil {
 			return nil, err
 		}
 		dir, err := filepath.Abs(cfg.StateDir)
@@ -118,11 +117,21 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			a.catalog = snapshot.OpenCatalog(dir)
 			a.stateDir = dir
 		}
+		ttlStore := snapshot.ReadTTLMetadata(dir)
+		if ttlGuard != nil {
+			ttlStore, err = snapshot.OpenTTLMetadata(dir)
+			if err != nil {
+				a.mu.Unlock()
+				return nil, err
+			}
+		}
+		a.ttl.configure(ttlGuard, ttlStore)
 		a.modelListFilterEnabled = cfg.ModelListFilterEnabled
-		a.modelMismatch = cfg.ResponseModelMismatch
 		a.runtime.Resume()
 		a.mu.Unlock()
-		a.logModelConfiguration(cfg.ResponseModelMismatch)
+		if cfg.RemovedResponseModelMismatch.Kind != 0 {
+			slog.Warn("response_model_mismatch has been removed; legacy configuration is ignored")
+		}
 		return ok(registration{
 			SchemaVersion: pluginabi.SchemaVersion,
 			Metadata: pluginapi.Metadata{
@@ -131,36 +140,20 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 				ConfigFields: []pluginapi.ConfigField{
 					{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Default: filepath.Join("plugins", "cpa-helper-state"), Description: "Dedicated persistent policy directory; parent must exist."},
 					{Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Default: true, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"},
-					{Name: "response_model_mismatch", Type: pluginapi.ConfigFieldTypeObject, Default: defaultModelMismatchConfig(), Description: "上游响应模型不匹配检测；默认关闭。"},
+					{Name: "claude_cache_ttl", Type: pluginapi.ConfigFieldTypeObject, Default: claudeTTLConfig{}, Description: "单请求 Claude TTL；启用前配置严格校验的 payload 规则、绝对 host_config_path 及与 CPA 一致的 delegate_builtin。"},
 				},
 			},
-			Capabilities: map[string]bool{"request_interceptor": true, "request_interceptor_omit_body_after": true, "response_interceptor": true, "response_stream_interceptor": true, "response_before_translator": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true},
+			Capabilities: map[string]bool{"request_interceptor": true, "request_interceptor_omit_body_before": true, "request_interceptor_omit_body_after": true, "response_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true, "usage_plugin": true},
 		})
-	case pluginabi.MethodResponseNormalizeBefore:
-		var req pluginapi.ResponseTransformRequest
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, errors.New("invalid raw response payload")
-		}
-		a.observeResponseModel(req)
-		return ok(pluginapi.PayloadResponse{})
 	case pluginabi.MethodResponseInterceptAfter:
 		var req pluginapi.ResponseInterceptRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return modelListError("invalid_model_catalog", "模型列表响应载荷格式无效")
 		}
-		if req.Model != "" || req.RequestedModel != "" || len(req.OriginalRequest) != 0 || len(req.RequestBody) != 0 {
-			return a.interceptResponseModel(req)
-		}
 		if !a.modelListFiltering() {
 			return ok(pluginapi.ResponseInterceptResponse{})
 		}
 		return a.filterModelList(req)
-	case pluginabi.MethodResponseInterceptStreamChunk:
-		var req pluginapi.StreamChunkInterceptRequest
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, errors.New("invalid stream interception payload")
-		}
-		return a.interceptStreamModel(req)
 	case pluginabi.MethodRequestInterceptBefore:
 		var req pluginapi.RequestInterceptRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -168,14 +161,31 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		}
 		return a.intercept(req)
 	case pluginabi.MethodRequestInterceptAfter:
-		return ok(pluginapi.RequestInterceptResponse{})
+		var req pluginapi.RequestInterceptRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, errors.New("invalid after-interception payload")
+		}
+		response, err := a.ttl.after(req)
+		if err != nil {
+			return denied(503, "claude_ttl_unavailable", err.Error(), req.SourceFormat)
+		}
+		return ok(response)
+	case pluginabi.MethodUsageHandle:
+		var req pluginapi.UsageRecord
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, errors.New("invalid usage observation payload")
+		}
+		if err := a.ttl.observe(req); err != nil {
+			return nil, err
+		}
+		return ok(struct{}{})
 	case pluginabi.MethodRequestComplete:
 		var req pluginapi.RequestCompletion
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, errors.New("invalid completion payload")
 		}
 		a.runtime.Complete(req.RequestID)
-		a.completeModelMismatch(req.RequestID)
+		a.ttl.complete(req.RequestID)
 		return ok(struct{}{})
 	case pluginabi.MethodSchedulerPick:
 		var req pluginapi.SchedulerPickRequest
@@ -193,7 +203,6 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		return a.management(req)
 	case pluginabi.MethodPluginQuiesce:
 		a.runtime.Quiesce()
-		a.clearModelMismatchStates()
 		return ok(struct{}{})
 	case pluginabi.MethodPluginShutdown:
 		a.Shutdown()
@@ -204,7 +213,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 }
 
 // Shutdown clears transient state after the host detaches the instance.
-func (a *App) Shutdown() { a.runtime.Shutdown(); a.clearModelMismatchStates() }
+func (a *App) Shutdown() { a.runtime.Shutdown(); a.ttl.shutdown() }
 func (a *App) modelListFiltering() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -265,8 +274,11 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 			return denied(429, "concurrency_limit", "当前 API Key 已达设定并发上限", req.SourceFormat)
 		}
 	}
-	a.beginModelMismatch(req)
-	return ok(pluginapi.RequestInterceptResponse{})
+	response, err := a.ttl.begin(req, k, rev)
+	if err != nil {
+		return denied(503, "claude_ttl_unavailable", err.Error(), req.SourceFormat)
+	}
+	return ok(response)
 }
 
 func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
@@ -309,8 +321,12 @@ func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
 			allowed = append(allowed, run.Candidate{ID: c.ID, Weight: weight})
 		}
 	}
+	delegate, err := a.ttl.selection(req)
+	if err != nil {
+		return ErrorEnvelope("claude_ttl_unavailable", err.Error(), 503)
+	}
 	if len(allowed) == len(req.Candidates) && len(allowed) > 0 {
-		return ok(pluginapi.SchedulerPickResponse{})
+		return ok(pluginapi.SchedulerPickResponse{DelegateBuiltin: delegate, Handled: delegate != ""})
 	}
 	id := a.runtime.Pick(rev, scope, strings.ToLower(model), allowed)
 	if id == "" {

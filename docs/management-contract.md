@@ -10,27 +10,30 @@ management surface.
 
 ## Endpoints
 
+Plugin 0.1.10 also exposes optional Key `claude_cache_ttl` and authenticated
+`GET /claude-ttl/requirements`, `POST /claude-ttl/executions` under the v1 prefix.
+The metadata has no token counts and uses `ttl_source=enforced_request`, not actual
+upstream evidence. Setup, strict configuration prerequisites, retention, unknown
+semantics and the explicit Helper handoff are defined in
+[claude-uniform-ttl.md](claude-uniform-ttl.md). Check the capability module instead
+of assuming the published 0.1.9 binary contains this feature.
+
 Model-list filtering is controlled through CPA's official plugin configuration:
 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin` with
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, target CPA v8.0.45, plugin version 0.1.9, C ABI 1 and RPC schema 7.
+reports its current value, target CPA v8.0.45, plugin version 0.1.10, C ABI 1 and RPC schema 7.
 `GET /v8/management/plugins` exposes each configuration field's `default`,
-including the default state directory, enabled model-list filtering, and the
-complete disabled-by-default response-verification settings.
+including the state directory, enabled model-list filtering, and optional Claude TTL.
 
-Response verification uses `PUT /v8/management/config/plugins/configs/cpa-helper-plugin/response_model_mismatch`
-with the complete verification object. This replaces cleared mappings while
-preserving sibling plugin settings; PATCH would recursively retain old mappings.
-The plugin panel exposes all its fields.
-`POST /v1/response-model/validate` accepts this object, rejects unknown fields and
-invalid enum/mapping values with 400, and returns normalized defaults without
-mutating state. The panel validates, PUTs CPA, then polls capabilities until
-the requested configuration is active (a save response alone is insufficient).
-Failed reconfiguration leaves all prior plugin settings active. In-flight requests
-retain their starting settings. See response-model-mismatch.md for field defaults,
-response error shapes, raw-response association limits and rollback.
+Plugin 0.1.10 removes response model verification. It no longer advertises
+`response_model_mismatch` in configuration metadata or capabilities, its module is
+absent, and health omits `response_model_tracked_requests`. The former
+`POST /v1/response-model/validate` returns 404. Existing CPA YAML containing the
+removed setting loads with a warning and is ignored; it cannot enable a hook.
+External clients must remove or hide their verification editor and stop its
+validation/configuration calls. See [the removal record](response-verification-removal.md).
 
 The v1 prefix is `/v0/management/plugins/cpa-helper-plugin/v1`. CPA's management
 middleware authenticates every request using its management key. The plugin does
@@ -38,7 +41,7 @@ not open an additional listener or accept downstream API keys for administration
 
 | Method | Resource | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | plugin status, active revision, policy age, contract version, response_model_tracked_requests (all tracked executions, including disabled/exempt checks) |
+| `GET` | `/health` | plugin status, active revision, policy age, contract version, concurrency, model catalog and Claude TTL health |
 | `GET` | `/policy` | complete policy with hashed identifiers; ETag is the revision |
 | `PUT` | `/policy` | validate and atomically activate a complete snapshot |
 | `POST` | `/policy/rollback` | activate a retained revision |
@@ -47,7 +50,6 @@ not open an additional listener or accept downstream API keys for administration
 | `GET` | `/credential-models` | complete Host-registered credential/model associations, fingerprinted actual IDs and no scheduling |
 | `GET` | `/model-catalog` | saved model associations and health; ETag is the independent catalog revision |
 | `PUT` | `/model-catalog` | validate and atomically persist a complete model directory |
-| `POST` | `/response-model/validate` | validate response-verification settings without saving |
 
 Mutations require `If-Match: "<current revision>"` and `Idempotency-Key`.
 `PUT /policy` supplies the next revision. `POST /policy/rollback` supplies
@@ -66,7 +68,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.9",
+  "plugin_version": "0.1.10",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -75,8 +77,8 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.9` accepts snapshots produced by `0.1.0` through `0.1.8`;
-all ten supported producer versions are enumerated in the schema. The policy contract remains
+Plugin `0.1.10` accepts snapshots produced by `0.1.0` through `0.1.9`;
+all eleven supported producer versions are enumerated in the schema. The policy contract remains
 `v1`, and existing policy state does not require migration. Binary rollback must restore
 the matching pre-upgrade state backup; do not rewrite producer metadata to bypass compatibility.
 The complete `PUT /policy` operation is the external administration interface for
@@ -193,7 +195,7 @@ directory; `health.status` is `unavailable` and the initial ETag is `"0"`.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.9",
+  "plugin_version": "0.1.10",
   "cpa_version": "v8.0.45",
   "catalog_revision": 1,
   "generated_at": "2026-10-28T00:00:00Z",
@@ -215,9 +217,9 @@ the active catalog until restart reconciles disk state.
 `/health.model_catalog` reports availability, revision, generated/accepted times,
 age, credential count, last rejection, snapshot `plugin_version`, snapshot
 `cpa_version` and `refresh_required`. Valid format-1 v1 catalogs from producer
-0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
+0.1.9/CPA v8.0.45 and 0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
 unchanged and `refresh_required: true`. Startup does not rewrite them. New writes
-require the current 0.1.9/v8.0.45 envelope and the next revision; exact historical
+require the current 0.1.10/v8.0.45 envelope and the next revision; exact historical
 idempotency retries still return their original receipt. Unknown versions or
 corrupt state remain errors. This is independent of policy health:
 model-only policies and unrestricted callers do not need credential associations.

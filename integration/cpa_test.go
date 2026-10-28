@@ -131,6 +131,9 @@ plugins:
     cpa-helper-plugin:
       enabled: true
       state_dir: %q
+      response_model_mismatch:
+        enabled: true
+        unknown_action: reject
       store:
         id: cpa-helper-plugin
 openai-compatibility:
@@ -291,12 +294,11 @@ openai-compatibility:
 	}
 	status, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
 	var defaults struct {
-		Filter   bool                       `json:"model_list_filter_enabled"`
-		Response policy.ResponseModelConfig `json:"response_model_mismatch"`
-		ABI      uint32                     `json:"abi_version"`
-		Schema   uint32                     `json:"schema_version"`
-		CPA      string                     `json:"cpa_version"`
-		Plugin   string                     `json:"plugin_version"`
+		Filter bool   `json:"model_list_filter_enabled"`
+		ABI    uint32 `json:"abi_version"`
+		Schema uint32 `json:"schema_version"`
+		CPA    string `json:"cpa_version"`
+		Plugin string `json:"plugin_version"`
 	}
 	if status != 200 || json.Unmarshal(body, &defaults) != nil {
 		t.Fatalf("default capabilities: %d %s", status, body)
@@ -304,11 +306,18 @@ openai-compatibility:
 	if defaults.ABI != 1 || defaults.Schema != 7 || defaults.CPA != "v8.0.45" || defaults.Plugin != policy.Version {
 		t.Fatalf("target capabilities do not match the pinned contract: %s", body)
 	}
+	if bytes.Contains(body, []byte("response_model_mismatch")) {
+		t.Fatalf("removed response verification is advertised: %s", body)
+	}
+	status, body = call("POST", plugin.BasePath+"/response-model/validate", "fixture-management", map[string]any{"enabled": true}, nil)
+	if status != 404 {
+		t.Fatalf("removed verification route: %d %s", status, body)
+	}
 	// The host's serialized defaults must agree with the plugin's omitted settings.
 	wantDefaults, err := json.Marshal(map[string]any{
 		"state_dir":                 map[string]any{"type": "string", "default": filepath.Join("plugins", "cpa-helper-state")},
 		"model_list_filter_enabled": map[string]any{"type": "boolean", "default": defaults.Filter},
-		"response_model_mismatch":   map[string]any{"type": "object", "default": defaults.Response},
+		"claude_cache_ttl":          map[string]any{"type": "object", "default": map[string]any{"enabled": false, "host_config_path": "", "delegate_builtin": ""}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -589,58 +598,64 @@ openai-compatibility:
 	cancel()
 	_ = resp.Body.Close()
 	waitIdle(t, call)
-	// Response verification is post-execution, independent of route-model aliases.
-	applyVerification := func(cfg policy.ResponseModelConfig) {
-		t.Helper()
-		status, body := call("PUT", "/v8/management/config/plugins/configs/"+plugin.ID+"/response_model_mismatch", "fixture-management", cfg, nil)
-		if status != 200 {
-			t.Fatalf("verification config: %d %s", status, body)
+	// Responses text must arrive while the upstream is still open, including
+	// Codex-originated requests. The removed verifier used to buffer until EOF.
+	for _, originator := range []string{"", "codex_cli_rs"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/responses", strings.NewReader(`{"model":"route-model","stream":true,"input":"incremental passthrough"}`))
+		if err != nil {
+			cancel()
+			t.Fatal(err)
 		}
-		deadline := time.Now().Add(10 * time.Second)
-		for {
-			_, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
-			var caps struct {
-				Config policy.ResponseModelConfig `json:"response_model_mismatch"`
-			}
-			if err := json.Unmarshal(body, &caps); err != nil {
-				t.Fatal(err)
-			}
-			got, _ := json.Marshal(caps.Config)
-			want, _ := json.Marshal(cfg)
-			if bytes.Equal(got, want) {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("verification reconfigure timeout: %s", body)
-			}
-			time.Sleep(100 * time.Millisecond)
+		req.Header.Set("Authorization", "Bearer fixture-downstream")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Originator", originator)
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatal("Responses waited for upstream completion", err)
 		}
+		reader := bufio.NewReader(resp.Body)
+		var received strings.Builder
+		for !strings.Contains(received.String(), "hello") {
+			line, err := reader.ReadString('\n')
+			received.WriteString(line)
+			if err != nil {
+				cancel()
+				resp.Body.Close()
+				t.Fatalf("Responses text was buffered: %v; %s", err, received.String())
+			}
+		}
+		cancel()
+		resp.Body.Close()
+		select {
+		case <-streamStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Responses upstream not started")
+		}
+		waitIdle(t, call)
 	}
-	verify := policy.DefaultResponseModelConfig()
-	verify.Enabled = true
-	applyVerification(verify)
+	// Legacy enabled/reject configuration must not restore response verification.
 	mu.Lock()
 	responseModel = "watered-model"
 	finiteStream = true
 	mu.Unlock()
 	for _, stream := range []bool{false, true} {
-		status, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": stream, "messages": []map[string]string{{"role": "user", "content": "verify"}}}, nil)
-		if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) || bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte("later-secret")) {
-			t.Fatalf("mismatch stream=%v: %d %s", stream, status, body)
+		status, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": stream, "messages": []map[string]string{{"role": "user", "content": "passthrough"}}}, nil)
+		want := "ok"
+		if stream {
+			want = "terminal-secret"
+		}
+		if status != 200 || bytes.Contains(body, []byte(`"error":{`)) || !bytes.Contains(body, []byte(want)) || !bytes.Contains(body, []byte("watered-model")) {
+			t.Fatalf("response passthrough stream=%v: %d %s", stream, status, body)
 		}
 		waitIdle(t, call)
 	}
-	// v8.0.45 treats the plugin's error chunk as terminal and cancels before
-	// delivering later finish chunks. It must not append a false success/truncation.
-	if bytes.Count(body, []byte(`"error":`)) != 1 || bytes.Contains(body, []byte("internal_server_error")) || bytes.Contains(body, []byte("terminal-secret")) || bytes.Contains(body, []byte(`"finish_reason":"stop"`)) {
-		t.Fatalf("Chat rejection terminal sequence: %s", body)
-	}
 	mu.Lock()
 	streamEnding = "truncated"
-	responseModel = "route-model"
 	mu.Unlock()
 	_, body = call("POST", "/v1/chat/completions", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "messages": []map[string]string{{"role": "user", "content": "truncated"}}}, nil)
-	if bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("upstream stream closed")) || bytes.Contains(body, []byte("finish_reason\":\"stop")) {
+	if !bytes.Contains(body, []byte("hello")) || !bytes.Contains(body, []byte("upstream stream closed")) || bytes.Contains(body, []byte("finish_reason\":\"stop")) {
 		t.Fatalf("real truncation hidden: %s", body)
 	}
 	waitIdle(t, call)
@@ -648,50 +663,31 @@ openai-compatibility:
 	streamEnding = "done"
 	responseModel = "watered-model"
 	mu.Unlock()
-	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "verify responses"}, nil)
-	if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) {
-		t.Fatalf("translated mismatch: %d %s", status, body)
+	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "input": "passthrough responses"}, nil)
+	if status != 200 || bytes.Contains(body, []byte(`"error":{`)) || !bytes.Contains(body, []byte("ok")) {
+		t.Fatalf("translated response passthrough: %d %s", status, body)
 	}
 	waitIdle(t, call)
 	for _, tc := range []struct {
 		path string
 		body map[string]any
 	}{
-		{"/v1/responses", map[string]any{"model": "route-model", "stream": true, "input": "verify stream responses"}},
-		{"/v1/messages", map[string]any{"model": "route-model", "max_tokens": 10, "stream": true, "messages": []map[string]string{{"role": "user", "content": "verify claude"}}}},
-		{"/v1beta/models/route-model:streamGenerateContent?alt=sse", map[string]any{"contents": []map[string]any{{"parts": []map[string]string{{"text": "verify gemini"}}}}}},
+		{"/v1/responses", map[string]any{"model": "route-model", "stream": true, "input": "passthrough responses"}},
+		{"/v1/messages", map[string]any{"model": "route-model", "max_tokens": 10, "stream": true, "messages": []map[string]string{{"role": "user", "content": "passthrough claude"}}}},
+		{"/v1beta/models/route-model:streamGenerateContent?alt=sse", map[string]any{"contents": []map[string]any{{"parts": []map[string]string{{"text": "passthrough gemini"}}}}}},
 	} {
 		status, body = call("POST", tc.path, "fixture-downstream", tc.body, nil)
-		if status != 200 || !bytes.Contains(body, []byte("upstream_model_mismatch")) || bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte("later-secret")) {
-			t.Fatalf("converted stream %s: %d %s", tc.path, status, body)
+		if status != 200 || bytes.Contains(body, []byte(`"error":{`)) || !bytes.Contains(body, []byte("hello")) || !bytes.Contains(body, []byte("later-secret")) {
+			t.Fatalf("converted stream passthrough %s: %d %s", tc.path, status, body)
 		}
 		waitIdle(t, call)
 	}
-	status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "input": "verify codex terminal error"}, map[string]string{"Originator": "codex_cli_rs"})
-	if status != 200 || !bytes.Contains(body, []byte("event: response.failed")) || !bytes.Contains(body, []byte(`"code":"invalid_prompt"`)) || !bytes.Contains(body, []byte(`"verification_code":"upstream_model_mismatch"`)) || !bytes.Contains(body, []byte(`"status":403`)) || bytes.Contains(body, []byte("later-secret")) {
-		t.Fatalf("Codex terminal rejection: %d %s", status, body)
-	}
-	waitIdle(t, call)
-	verify.Accepted = map[string][]string{"route-model": {"watered-model"}}
-	applyVerification(verify)
-	status, body = chat("route-model", "fixture-downstream")
-	if status != 200 || bytes.Contains(body, []byte("upstream_model_mismatch")) || !bytes.Contains(body, []byte("watered-model")) {
-		t.Fatalf("accepted mapping: %d %s", status, body)
-	}
-	waitIdle(t, call)
-	verify.Accepted = map[string][]string{}
-	verify.UnknownAction = "reject"
-	applyVerification(verify)
-	mu.Lock()
-	responseModel = "route-model"
-	mu.Unlock()
 	for _, ending := range []string{"eof", "truncated"} {
 		mu.Lock()
 		streamEnding = ending
 		mu.Unlock()
 		status, body = call("POST", "/v1/responses", "fixture-downstream", map[string]any{"model": "route-model", "stream": true, "input": "EOF contract"}, nil)
-		// Before any buffered output, CPA can still send an HTTP 502. If SSE
-		// headers were committed first, the same failure is an in-stream error.
+		// CPA may commit stream headers before discovering a truncated upstream.
 		if status != 200 && !(ending == "truncated" && status == 502) {
 			t.Fatalf("Responses %s: %d %s", ending, status, body)
 		}
@@ -699,8 +695,8 @@ openai-compatibility:
 			if !bytes.Contains(body, []byte("response.completed")) || !bytes.Contains(body, []byte("hello")) || bytes.Contains(body, []byte(`"error":{`)) {
 				t.Fatalf("clean EOF not completed: %s", body)
 			}
-		} else if bytes.Contains(body, []byte("response.completed")) || bytes.Contains(body, []byte("hello")) || !bytes.Contains(body, []byte("error")) {
-			t.Fatalf("truncated Responses released: %s", body)
+		} else if bytes.Contains(body, []byte("response.completed")) || !bytes.Contains(body, []byte("error")) {
+			t.Fatalf("truncated Responses reported success: %s", body)
 		}
 		waitIdle(t, call)
 	}
@@ -709,24 +705,10 @@ openai-compatibility:
 	responseModel = ""
 	mu.Unlock()
 	status, body = chat("route-model", "fixture-downstream")
-	if !bytes.Contains(body, []byte("response_model_unverifiable")) || bytes.Contains(body, []byte("upstream_model_mismatch")) {
-		t.Fatalf("unknown model misclassified: %s", body)
+	if status != 200 || bytes.Contains(body, []byte(`"error":{`)) || !bytes.Contains(body, []byte("ok")) {
+		t.Fatalf("missing response model blocked: %d %s", status, body)
 	}
 	waitIdle(t, call)
-	applyVerification(policy.DefaultResponseModelConfig())
-	status, body = call("GET", "/v8/management/observability/logs?limit=1000", "fixture-management", nil, nil)
-	var verificationLogs struct {
-		Lines []string `json:"lines"`
-	}
-	if status != 200 || json.Unmarshal(body, &verificationLogs) != nil {
-		t.Fatalf("CPA log management contract: %d %s", status, body)
-	}
-	joinedLogs := strings.Join(verificationLogs.Lines, "\n")
-	for _, want := range []string{"[响应核验] 配置已生效", "result=blocked", "result=matched", `requested_model="route-model"`, `actual_model="watered-model"`, "plugin_id=cpa-helper-plugin"} {
-		if !strings.Contains(joinedLogs, want) {
-			t.Fatalf("CPA log viewer missing %q: %s", want, joinedLogs)
-		}
-	}
 	mu.Lock()
 	responseModel = "upstream-model"
 	finiteStream = false
@@ -866,60 +848,62 @@ openai-compatibility:
 		}
 	}
 	stop()
-	// Reload a captured-format 0.1.8/v8.0.32 catalog without rewriting its
+	// Reload both verified older catalogs without rewriting their
 	// provenance, then explicitly publish and reload the next current revision.
-	legacy := modelcatalog.Clone(modelSnapshot)
-	legacy.PluginVersion, legacy.CPAVersion, legacy.Revision = "0.1.8", "v8.0.32", 7
-	legacy.GeneratedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	legacyJSON, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
+	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}} {
+		legacy := modelcatalog.Clone(modelSnapshot)
+		legacy.PluginVersion, legacy.CPAVersion, legacy.Revision = producer[0], producer[1], 7
+		legacy.GeneratedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+		legacyJSON, err := json.Marshal(legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyDigest := sha256.Sum256(append([]byte("catalog:6:"), legacyJSON...))
+		legacyState := map[string]any{"format": 1, "current": legacy, "accepted_at": legacy.GeneratedAt.Add(time.Minute), "receipts": map[string]any{"legacy": map[string]any{"digest": hex.EncodeToString(legacyDigest[:]), "revision": 7}}}
+		legacyDisk, err := json.Marshal(legacyState)
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalogPath := filepath.Join(dir, "state", "model-catalog.json")
+		if err := os.WriteFile(catalogPath, legacyDisk, 0600); err != nil {
+			t.Fatal(err)
+		}
+		start()
+		status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
+		if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":true`)) || !bytes.Contains(body, []byte(`"cpa_version":"`+producer[1]+`"`)) || !bytes.Contains(body, []byte(`"plugin_version":"`+producer[0]+`"`)) {
+			t.Fatalf("legacy catalog unavailable after real CPA upgrade: %d %s", status, body)
+		}
+		if saved, err := os.ReadFile(catalogPath); err != nil || !bytes.Equal(saved, legacyDisk) {
+			t.Fatal("CPA startup rewrote the legacy catalog", err)
+		}
+		status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+		if status != 200 || !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"blocked-model"`)) {
+			t.Fatalf("legacy catalog lost policy filtering: %d %s", status, body)
+		}
+		upgrade := modelcatalog.Clone(legacy)
+		upgrade.PluginVersion, upgrade.CPAVersion, upgrade.Revision = policy.Version, plugin.CPAVersion, 8
+		upgrade.GeneratedAt = time.Now().UTC()
+		status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", upgrade, map[string]string{"If-Match": "7", "Idempotency-Key": "upgrade"})
+		if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
+			t.Fatalf("legacy upgrade publication: %d %s", status, body)
+		}
+		stop()
+		start()
+		status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
+		if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":false`)) || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
+			t.Fatalf("restart lost upgraded catalog: %d %s", status, body)
+		}
+		status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
+		var afterUpgrade policy.Snapshot
+		if status != 200 || json.Unmarshal(body, &afterUpgrade) != nil || !reflect.DeepEqual(afterUpgrade, persistedPolicy) {
+			t.Fatalf("catalog upgrade changed policy: %d %s", status, body)
+		}
+		status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", legacy, map[string]string{"If-Match": "6", "Idempotency-Key": "legacy"})
+		if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":7`)) {
+			t.Fatalf("restart lost legacy receipt: %d %s", status, body)
+		}
+		stop()
 	}
-	legacyDigest := sha256.Sum256(append([]byte("catalog:6:"), legacyJSON...))
-	legacyState := map[string]any{"format": 1, "current": legacy, "accepted_at": legacy.GeneratedAt.Add(time.Minute), "receipts": map[string]any{"legacy": map[string]any{"digest": hex.EncodeToString(legacyDigest[:]), "revision": 7}}}
-	legacyDisk, err := json.Marshal(legacyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalogPath := filepath.Join(dir, "state", "model-catalog.json")
-	if err := os.WriteFile(catalogPath, legacyDisk, 0600); err != nil {
-		t.Fatal(err)
-	}
-	start()
-	status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
-	if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":true`)) || !bytes.Contains(body, []byte(`"cpa_version":"v8.0.32"`)) {
-		t.Fatalf("legacy catalog unavailable after real CPA upgrade: %d %s", status, body)
-	}
-	if saved, err := os.ReadFile(catalogPath); err != nil || !bytes.Equal(saved, legacyDisk) {
-		t.Fatal("CPA startup rewrote the legacy catalog", err)
-	}
-	status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
-	if status != 200 || !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"blocked-model"`)) {
-		t.Fatalf("legacy catalog lost policy filtering: %d %s", status, body)
-	}
-	upgrade := modelcatalog.Clone(legacy)
-	upgrade.PluginVersion, upgrade.CPAVersion, upgrade.Revision = policy.Version, plugin.CPAVersion, 8
-	upgrade.GeneratedAt = time.Now().UTC()
-	status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", upgrade, map[string]string{"If-Match": "7", "Idempotency-Key": "upgrade"})
-	if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
-		t.Fatalf("legacy upgrade publication: %d %s", status, body)
-	}
-	stop()
-	start()
-	status, body = call("GET", plugin.BasePath+"/model-catalog", "fixture-management", nil, nil)
-	if status != 200 || !bytes.Contains(body, []byte(`"refresh_required":false`)) || !bytes.Contains(body, []byte(`"catalog_revision":8`)) {
-		t.Fatalf("restart lost upgraded catalog: %d %s", status, body)
-	}
-	status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
-	var afterUpgrade policy.Snapshot
-	if status != 200 || json.Unmarshal(body, &afterUpgrade) != nil || !reflect.DeepEqual(afterUpgrade, persistedPolicy) {
-		t.Fatalf("catalog upgrade changed policy: %d %s", status, body)
-	}
-	status, body = call("PUT", plugin.BasePath+"/model-catalog", "fixture-management", legacy, map[string]string{"If-Match": "6", "Idempotency-Key": "legacy"})
-	if status != 200 || !bytes.Contains(body, []byte(`"catalog_revision":7`)) {
-		t.Fatalf("restart lost legacy receipt: %d %s", status, body)
-	}
-	stop()
 	stored, err := os.ReadFile(filepath.Join(dir, "state", "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -938,7 +922,7 @@ openai-compatibility:
 			t.Fatal("model catalog leaked credential identity")
 		}
 	}
-	t.Log("Configured CPA binary: dynamic load, management auth/resources and config defaults, model-list filtering and authenticated visibility fallback, raw response model verification (Chat/Responses/Claude/Gemini), mappings and unknown rejection, alias policy, subset weights, streaming cancellation, concurrency, lifecycle cleanup, fail-closed routing, restart, rollback and policy recovery after per-plugin/global disable/re-enable passed")
+	t.Log("Configured CPA binary: dynamic load, management auth/resources and config defaults, model-list filtering and authenticated visibility fallback, response verification removal with legacy config and Chat/Responses/Claude/Gemini passthrough, alias policy, subset weights, streaming cancellation, truncation, concurrency, lifecycle cleanup, fail-closed routing, restart, rollback and policy recovery after per-plugin/global disable/re-enable passed")
 }
 
 func waitIdle(t *testing.T, call func(string, string, string, any, map[string]string) (int, []byte)) {
@@ -947,13 +931,12 @@ func waitIdle(t *testing.T, call func(string, string, string, any, map[string]st
 	for time.Now().Before(deadline) {
 		status, body := call("GET", plugin.BasePath+"/health", "fixture-management", nil, nil)
 		var h struct {
-			Active           map[string]int `json:"active"`
-			ResponseTracking int            `json:"response_model_tracked_requests"`
+			Active map[string]int `json:"active"`
 		}
-		if status == 200 && json.Unmarshal(body, &h) == nil && len(h.Active) == 0 && h.ResponseTracking == 0 {
+		if status == 200 && json.Unmarshal(body, &h) == nil && len(h.Active) == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("completion did not release concurrency or response verification state")
+	t.Fatal("completion did not release concurrency")
 }

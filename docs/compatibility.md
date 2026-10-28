@@ -5,6 +5,51 @@ must be updated before any ABI-facing change.
 
 ## Current target: CPA v8.0.45
 
+Release candidate 0.1.10 targets CPA v8.0.45
+(`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`), C ABI 1 / RPC schema 7,
+with Go 1.26.10 or newer. It includes uniform Claude TTL and removes response
+verification. Policies from 0.1.0 through 0.1.9 remain readable; saved catalogs from
+0.1.9/v8.0.45 and 0.1.8/v8.0.32 retain their provenance and are not rewritten on
+startup. New catalog publications require 0.1.10/v8.0.45. Back up state before
+upgrading; rollback restores compatible binaries and the pre-upgrade state.
+See [the release record](v0.1.10-release.md) for publication and artifact validation.
+
+The 0.1.10 implementation removes response model verification. It still targets
+CPA v8.0.45, C ABI 1 / RPC schema 7. It no longer registers raw-response or stream
+interception hooks, and omits request bodies both before and after authentication.
+Model-list filtering keeps the ordinary response hook. Legacy
+`response_model_mismatch` YAML is accepted only to allow upgrades, ignored with
+an explicit warning, and cannot enable the removed feature. Its management route,
+capabilities, health fields and UI are removed. See
+[the removal record](response-verification-removal.md) for scope and validation.
+This is not a change to the published v0.1.9 binary.
+
+Removal verification passed on 2026-10-28 with Windows amd64 / Go 1.26.10 /
+UCRT GCC 16.2.0: fmt, vet, all Go tests, race, final library build, real CPA
+compatibility and both production TTL suites, 13 directory tests and Edge smoke.
+Legacy enabled/reject YAML cannot restore verification. Responses text arrives
+before upstream completion; cancellation, genuine truncation, model-list filtering
+and policy enforcement pass. VPS memory profiling, Linux/Docker runtime, a real
+Codex client and external-provider/Helper billing were not tested for this change.
+
+The 0.1.10 uniform Claude TTL implementation uses this same pinned CPA /
+C ABI 1 / RPC schema 7. Its public scheduler selection ID, request headers,
+payload rules and usage execution ID passed local Windows real-host fixtures.
+See [the TTL verification](claude-uniform-ttl-verification.md) for strict setup
+prerequisites and untested boundaries. This does not change the published 0.1.9
+binary or claim Helper billing/provider acceptance has been verified.
+
+The uniform TTL rules also require CPA v8.0.45 payload model `match` conditions
+for existing top-level automatic `cache_control`. The root TTL is normalized only
+when `cache_control.type` is `ephemeral`; an absent root control stays absent.
+
+The opt-in Claude TTL feasibility probe under `integration/testdata/ttlprobe`
+targets this same CPA release, C ABI 1 and RPC schema 7. It is a diagnostic-only
+plugin, never a supported production artifact or an additional billing source.
+See [claude-ttl-feasibility.md](claude-ttl-feasibility.md) for its scope and results.
+
+## Published baseline: Plugin 0.1.9 / CPA v8.0.45
+
 Plugin 0.1.9 targets CPA v8.0.45
 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`), C ABI 1 / RPC schema 7,
 with Go 1.26.10 or newer. Verified locally on Windows amd64 on 2026-10-28;
@@ -13,7 +58,7 @@ from source `1e98b18461898f200642677931ce44df8f5e534d`. The implementation
 and acceptance evidence are tracked in [tasks.md](tasks.md), with requirements in
 [cpa-v8.0.45-prd.md](cpa-v8.0.45-prd.md).
 
-The plugin requires schema 7, omits request bodies only after authentication,
+The published 0.1.9 binary requires schema 7, omits request bodies only after authentication,
 and uses `host.auth.models` for actual credential/model associations. Valid
 0.1.8/v8.0.32 catalogs must remain readable without an automatic disk rewrite;
 an explicit synchronization writes the next revision for the new target. Unknown
@@ -346,6 +391,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | release candidate; validation in progress | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
 | 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
 | 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |
 | 0.1.7 | v8.0.29 (`5fc580b1d72d87a7bcfe5cfb6f479c1aea5625b3`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Configuration defaults and disable/re-enable lifecycle contracts |

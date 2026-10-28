@@ -4,7 +4,7 @@
   const base = "/v0/management/plugins/cpa-helper-plugin/v1";
   const $ = id => document.getElementById(id);
   let token = "", snapshot = null, health = null, dirty = false, busy = false, editing = null, session = 0;
-  let keys = [], credentials = [], models = [], verification = null, verificationDirty = false;
+  let keys = [], credentials = [], models = [];
   let pluginVersion = "", cpaVersion = "";
   let catalogSync = null;
   const clone = value => structuredClone(value);
@@ -50,7 +50,6 @@
   function updateButtons() {
     for (const id of ["refresh", "sync", "refresh-models", "add-group"]) $(id).disabled = busy || !snapshot;
     for (const control of $("editor-form").querySelectorAll("input, select, button")) control.disabled = busy;
-    for (const control of $("verification-form").querySelectorAll("input, select, textarea, button")) control.disabled = busy || !verification;
   }
   async function persist(next) {
     const expectedRevision = snapshot.policy_revision + 1;
@@ -70,68 +69,10 @@
     const [p, h, caps] = await Promise.all([api(base + "/policy"), api(base + "/health"), api(base + "/capabilities")]);
     pluginVersion = caps.plugin_version; cpaVersion = caps.cpa_version;
     $("plugin-version").textContent = "PLUGIN / " + pluginVersion;
-    verification = caps.response_model_mismatch; renderVerification();
     snapshot = p; health = h; dirty = false;
     $("workspace").hidden = false;
     $("connection").textContent = "已连接"; $("connection").classList.add("ready"); render();
   }
-  function renderVerification() {
-    if (!verification) throw new Error("当前插件未提供响应核验配置");
-    $("verify-enabled").checked = verification.enabled;
-    $("verify-stream").checked = verification.stream_enabled;
-    $("verify-buffer").value = verification.max_buffer_bytes / (1024 * 1024);
-    $("verify-total-buffer").value = verification.max_total_buffer_bytes / (1024 * 1024);
-    $("verify-action").value = verification.action;
-    $("verify-unknown").value = verification.unknown_action;
-    $("verify-case").checked = verification.case_sensitive;
-    $("verify-thinking").checked = verification.ignore_thinking_suffix;
-    $("verify-ignored").value = (verification.ignored_models || []).join("\n");
-    $("verify-accepted").value = Object.entries(verification.accepted_models || {}).map(([from, to]) => from + " = " + to.join(", ")).join("\n");
-    verificationDirty = false;
-    $("verification-status").textContent = "";
-  }
-  function readVerification() {
-    const accepted = Object.create(null);
-    for (const line of $("verify-accepted").value.split("\n").map(x => x.trim()).filter(Boolean)) {
-      const i = line.indexOf("=");
-      if (i < 1) throw new Error("映射格式应为：请求模型 = 响应模型1, 响应模型2");
-      const name = line.slice(0, i).trim(), values = line.slice(i + 1).split(",").map(x => x.trim());
-      if (Object.hasOwn(accepted, name) || values.some(x => !x)) throw new Error("映射含重复请求模型或空响应模型");
-      accepted[name] = values;
-    }
-    const maxBuffer = Number($("verify-buffer").value), maxTotal = Number($("verify-total-buffer").value);
-    if (!Number.isInteger(maxBuffer) || maxBuffer < 1 || maxBuffer > 256) throw new Error("单请求暂存上限须为 1–256 MiB 的整数");
-    if (!Number.isInteger(maxTotal) || maxTotal < maxBuffer || maxTotal > 1024) throw new Error("并发暂存总上限须为整数，不小于单请求上限且不超过 1024 MiB");
-    return { enabled: $("verify-enabled").checked, stream_enabled: $("verify-stream").checked,
-      max_buffer_bytes: maxBuffer * 1024 * 1024, max_total_buffer_bytes: maxTotal * 1024 * 1024, action: $("verify-action").value,
-      unknown_action: $("verify-unknown").value, case_sensitive: $("verify-case").checked, ignore_thinking_suffix: $("verify-thinking").checked,
-      ignored_models: $("verify-ignored").value.split("\n").map(x => x.trim()).filter(Boolean), accepted_models: accepted };
-  }
-  function sameSettings(a, b) {
-    const canonical = value => JSON.stringify({ ...value, ignored_models: value.ignored_models || [], accepted_models: Object.fromEntries(Object.entries(value.accepted_models || {}).sort(([a], [b]) => a.localeCompare(b))) });
-    return canonical(a) === canonical(b);
-  }
-  $("verification-form").oninput = () => { verificationDirty = true; $("verification-status").textContent = "有未保存的修改"; };
-  $("verification-form").onsubmit = event => {
-    event.preventDefault();
-    void action(async () => {
-      $("verification-status").textContent = "正在校验并保存…";
-      try {
-        const next = await api(base + "/response-model/validate", { method: "POST", body: readVerification() });
-        await api("/v8/management/config/plugins/configs/cpa-helper-plugin/response_model_mismatch", { method: "PUT", body: next });
-        const deadline = Date.now() + 10000;
-        for (;;) {
-          const caps = await api(base + "/capabilities");
-          if (sameSettings(caps.response_model_mismatch, next)) { verification = caps.response_model_mismatch; renderVerification(); $("verification-status").textContent = "已保存并生效"; notice("响应核验配置已生效"); return; }
-          if (Date.now() >= deadline) throw new Error("CPA 已保存配置，但尚未确认插件生效，请刷新检查");
-          await new Promise(resolve => setTimeout(resolve, 150));
-        }
-      } catch (error) {
-        $("verification-status").textContent = "未确认生效：" + error.message;
-        throw error;
-      }
-    });
-  };
   async function syncDirectory() {
     const [config, directory, current, registered] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/model-catalog"), api(base + "/credential-models")]);
     const rawKeys = config.access?.["api-keys"] ?? [];
@@ -197,6 +138,7 @@
     $("health-details").replaceChildren();
     for (const [label, value] of [["状态", health.status], ["契约", health.contract_version], ["插件版本", health.plugin_version], ["最近同步", new Date(health.accepted_at).toLocaleString()], ["当前并发", Object.values(health.active || {}).reduce((a, b) => a + b, 0)], ["最近错误", health.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
     if (health.model_catalog) for (const [label, value] of [["模型目录状态", health.model_catalog.status], ["模型目录修订", health.model_catalog.catalog_revision], ["模型目录来源", health.model_catalog.cpa_version ? `${health.model_catalog.cpa_version} / 插件 ${health.model_catalog.plugin_version}${health.model_catalog.refresh_required ? "（需要重新同步）" : ""}` : "尚未同步"], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    if (health.claude_cache_ttl) for (const [label, value] of [["Claude TTL", health.claude_cache_ttl.status], ["TTL 元数据来源", health.claude_cache_ttl.ttl_source], ["TTL 未关联 Usage", health.claude_cache_ttl.unknown_usage], ["TTL 错误", health.claude_cache_ttl.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
     const excludedCount = catalogSync && catalogSync.revision === health.model_catalog?.catalog_revision ? catalogSync.excludedCount : 0;
     $("catalog-excluded").hidden = !excludedCount;
     $("catalog-excluded").textContent = excludedCount ? `本次目录同步排除 ${excludedCount} 个缺少元数据且未注册模型的 Host 条目；它们不参与模型归属判断。` : "";
@@ -234,6 +176,7 @@
     $("edit-label").required = kind === "group"; $("edit-label-title").textContent = kind === "key" ? "备注" : "名称";
     $("edit-key-value").hidden = kind !== "key"; $("edit-key-value").textContent = kind === "key" ? keys.find(k => k.id === value.id)?.display || "CPA 中已不存在的 Key" : "";
     $("edit-label").value = value.label || value.name || ""; $("key-fields").hidden = kind !== "key"; $("edit-enabled").checked = value.enabled !== false; $("edit-limit").value = value.max_concurrency || 0;
+    $("edit-claude-ttl").value = value.claude_cache_ttl || "";
     $("bindings").replaceChildren(); for (const g of snapshot.groups) { const label = element("label", undefined, "check"), checkbox = element("input"); checkbox.type = "checkbox"; checkbox.value = g.id; checkbox.checked = (value.group_ids || []).includes(g.id); label.append(checkbox, document.createTextNode(g.name)); $("bindings").append(label); }
     $("delete-entry").hidden = kind === "group" ? !snapshot.groups.some(g => g.id === value.id) : !snapshot.keys.some(k => k.id === value.id);
     $("editor-error").textContent = ""; renderChoices(); icons(); $("editor").showModal();
@@ -246,6 +189,8 @@
       const limit = Number($("edit-limit").value);
       if (!$("edit-limit").value || !Number.isSafeInteger(limit) || limit < 0) { $("editor-error").textContent = "并发上限必须为非负整数，尚未保存"; return; }
       value.label = $("edit-label").value.trim(); value.enabled = $("edit-enabled").checked; value.max_concurrency = limit; value.group_ids = [...$("bindings").querySelectorAll("input:checked")].map(c => c.value);
+      const ttl = $("edit-claude-ttl").value;
+      if (ttl) value.claude_cache_ttl = ttl; else delete value.claude_cache_ttl;
       next.keys = replaceByID(next.keys, value);
     } else {
       value.name = $("edit-label").value.trim();
@@ -280,7 +225,6 @@
   $("close-editor").onclick = closeEditor;
   $("editor").oncancel = event => { event.preventDefault(); void closeEditor(); };
   $("refresh").onclick = () => action(async () => {
-    if (verificationDirty && !await confirmAction("放弃核验配置修改", "尚未保存的核验配置将被丢弃。")) return;
     await load(); notice("已刷新");
   });
   $("sync").onclick = () => action(syncDirectory);
@@ -288,7 +232,7 @@
   $("add-group").onclick = () => openEditor("group", { id: newID(), name: "", rule: {} });
   $("key-search").oninput = render;
   for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => { for (const tab of document.querySelectorAll("[data-tab]")) { const selected = tab === b; tab.setAttribute("aria-selected", String(selected)); $(tab.dataset.tab + "-view").hidden = !selected; } };
-  window.addEventListener("beforeunload", event => { if (dirty || verificationDirty) { event.preventDefault(); event.returnValue = ""; } });
+  window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
   icons(); updateButtons();
   action(async () => { token = panelKey(); await load(); await syncDirectory(); });
 })();

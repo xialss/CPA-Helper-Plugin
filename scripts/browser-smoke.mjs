@@ -37,7 +37,7 @@ const config = {
   'api-keys': ['preview-key-alpha', 'preview-key-beta'],
   'remote-management': { 'secret-key': 'preview-management', 'allow-remote': false, 'disable-control-panel': true, 'disable-auto-update-panel': true },
   'request-retry': 0,
-  plugins: { enabled: true, dir: posix(path.join(dir, 'plugins')), configs: { 'cpa-helper-plugin': { enabled: true, state_dir: posix(path.join(dir, 'state')) } } },
+  plugins: { enabled: true, dir: posix(path.join(dir, 'plugins')), configs: { 'cpa-helper-plugin': { enabled: true, state_dir: posix(path.join(dir, 'state')), response_model_mismatch: { enabled: true, unknown_action: 'reject' } } } },
   'openai-compatibility': [
     { name: 'preview', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': [{ 'api-key': 'preview-upstream' }], models: [{ name: 'demo-model', alias: 'demo-model' }, { name: 'restricted-model', alias: 'restricted-model' }] },
     { name: 'keyless-null', prefix: 'team', 'base-url': `http://127.0.0.1:${upstream.address().port}/v1`, 'api-key-entries': null, models: [{ name: 'keyless-model', alias: 'keyless-model' }] },
@@ -207,8 +207,6 @@ try {
       await page.waitForFunction(() => !document.querySelector('#sync').disabled && !document.querySelector('#message').classList.contains('error'));
       assert.equal(modelRefreshRequests, 0, 'Ordinary sync must not refresh model sources');
       const beforeRefresh = await readCatalog();
-      await page.locator('[data-tab="verification"]').click();
-      await page.locator('#verify-ignored').fill('unsaved-refresh-draft');
       await page.locator('[data-tab="health"]').click();
       await page.route('**/v8/management/models/refresh', route => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'fixture refresh failed' }) }));
       await page.locator('#refresh-models').click();
@@ -230,9 +228,6 @@ try {
       assert.match(await page.locator('#message').textContent(), /排除 1 个缺少元数据的无模型条目/);
       assert.match(await page.locator('#catalog-excluded').textContent(), /排除 1 个/);
       assert.equal(await page.locator('#catalog-excluded').isVisible(), true);
-      assert.equal(await page.locator('#verify-ignored').inputValue(), 'unsaved-refresh-draft');
-      await page.locator('[data-tab="verification"]').click();
-      await page.locator('#verify-ignored').fill('');
       await page.locator('[data-tab="health"]').click();
       await mkdir(path.join(root, 'test-results'), { recursive: true });
       await page.screenshot({ path: path.join(root, 'test-results', 'health-desktop.png'), fullPage: true });
@@ -279,11 +274,23 @@ try {
       assert.equal(await page.locator('#category-options select').count(), new Set(inventory.map(item => item.source + '/' + item.provider)).size);
       await page.locator('#edit-label').fill('Development key'); await page.locator('#edit-label').press('Tab');
       await page.locator('#edit-limit').fill('2'); await page.locator('#edit-limit').press('Tab');
+      assert.equal(await page.locator('#edit-claude-ttl').inputValue(), '', 'Legacy Key must keep CPA behavior');
+      await page.locator('#edit-claude-ttl').selectOption('1h');
       await page.locator('#bindings input').first().check();
       await page.locator('#credential-options select[aria-label*="previe...ream"]').selectOption('allow');
       assert.equal((await readPolicy()).keys.length, 0, 'Key edits saved before clicking Save');
       await page.locator('#editor-form button[type="submit"]').click(); await saved();
       const chat = model => page.request.post(base + '/v1/chat/completions', { headers: { Authorization: 'Bearer preview-key-alpha' }, data: { model, messages: [{ role: 'user', content: 'fixture' }] } });
+      assert.equal((await readPolicy()).keys[0].claude_cache_ttl, '1h');
+      await page.locator('#key-rows button').first().click();
+      assert.equal(await page.locator('#edit-claude-ttl').inputValue(), '1h');
+      await page.locator('#edit-claude-ttl').selectOption('5m');
+      await page.locator('#editor-form button[type="submit"]').click(); await saved();
+      assert.equal((await readPolicy()).keys[0].claude_cache_ttl, '5m');
+      await page.locator('#key-rows button').first().click();
+      await page.locator('#edit-claude-ttl').selectOption('');
+      await page.locator('#editor-form button[type="submit"]').click(); await saved();
+      assert.equal(Object.hasOwn((await readPolicy()).keys[0], 'claude_cache_ttl'), false);
       const permitted = await chat('demo-model');
       assert.equal(permitted.status(), 200, await permitted.text());
       const denied = await chat('restricted-model');
@@ -324,6 +331,7 @@ try {
         return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":{"message":"fixture save failure"}}' });
       });
       await page.locator('#edit-limit').fill('3'); await page.locator('#edit-limit').press('Tab');
+      await page.locator('#edit-claude-ttl').selectOption('1h');
       await page.locator('#editor-form button[type="submit"]').click();
       await page.waitForFunction(() => document.querySelector('#editor-error').textContent.includes('保存响应修订不一致'));
       assert.equal(healthReads, 0, 'health was read before the write response revision was accepted');
@@ -337,8 +345,10 @@ try {
       assert.equal(await page.locator('#editor').evaluate(e => e.open), true);
       const unchanged = await page.request.get(base + '/v0/management/plugins/cpa-helper-plugin/v1/policy', { headers: { Authorization: 'Bearer preview-management' } });
       assert.equal((await unchanged.json()).keys[0].max_concurrency, 2);
+      assert.equal(await page.locator('#edit-claude-ttl').inputValue(), '1h', 'Failed save lost TTL draft');
       await page.unroute(policyURL);
       await page.locator('#edit-limit').fill('2'); await page.locator('#edit-limit').press('Tab');
+      await page.locator('#edit-claude-ttl').selectOption('');
       healthReads = 0;
       await page.locator('#editor-form button[type="submit"]').click(); await saved();
       assert.equal(healthReads, 1, 'successful save did not refresh health');
@@ -351,40 +361,22 @@ try {
       await page.locator('#group-list button').click(); await page.locator('#edit-note').fill('Discard this');
       await page.locator('#close-editor').click(); await page.locator('#confirm button[value="ok"]').click(); await saved();
       assert.equal((await readPolicy()).groups[0].note || '', '');
-      await page.locator('[data-tab="verification"]').click();
-      assert.equal(await page.locator('#verify-responses-only').count(), 0);
-      assert.equal(await page.locator('#verify-buffer').inputValue(), '2');
-      assert.equal(await page.locator('#verify-total-buffer').inputValue(), '8');
-      await page.locator('#verify-buffer').fill('3');
-      await page.locator('#verify-total-buffer').fill('2');
-      await page.locator('#save-verification').click();
-      await page.waitForFunction(() => document.querySelector('#verification-status').textContent.includes('不小于单请求上限'));
-      await page.locator('#verify-total-buffer').fill('12');
-      await page.locator('#verify-ignored').fill('v8-config-contract');
-      await page.locator('#verify-accepted').fill('demo-model = upstream-model');
-      await page.locator('#save-verification').click();
-      await page.waitForFunction(() => document.querySelector('#verification-status').textContent === '已保存并生效');
+      assert.equal(await page.locator('[data-tab="verification"], #verification-form, #save-verification').count(), 0);
+      const capabilities = await page.request.get(base + '/v0/management/plugins/cpa-helper-plugin/v1/capabilities', { headers: managementHeaders });
+      const caps = await capabilities.json();
+      assert.equal('response_model_mismatch' in caps, false);
+      assert.equal(caps.modules.includes('response_model_mismatch'), false);
+      const removedRoute = await page.request.post(base + '/v0/management/plugins/cpa-helper-plugin/v1/response-model/validate', { headers: managementHeaders, data: { enabled: true } });
+      assert.equal(removedRoute.status(), 404);
       const hostConfig = await page.request.get(base + '/v8/management/config/plugins/configs/cpa-helper-plugin', { headers: { Authorization: 'Bearer preview-management' } });
       assert.equal(hostConfig.status(), 200);
       const persistedConfig = await hostConfig.json();
-      assert.deepEqual(persistedConfig.response_model_mismatch.ignored_models, ['v8-config-contract']);
-      assert.equal(persistedConfig.response_model_mismatch.max_buffer_bytes, 3 * 1024 * 1024);
-      assert.equal(persistedConfig.response_model_mismatch.max_total_buffer_bytes, 12 * 1024 * 1024);
-      assert.equal('responses_only_stream' in persistedConfig.response_model_mismatch, false);
+      assert.deepEqual(persistedConfig.response_model_mismatch, { enabled: true, unknown_action: 'reject' }, 'Plugin rewrote inert legacy configuration');
       assert.equal(persistedConfig.enabled, true);
       assert.equal(persistedConfig.state_dir, posix(path.join(dir, 'state')));
       await page.reload();
       await page.waitForFunction(() => !document.querySelector('#sync').disabled);
-      await page.locator('[data-tab="verification"]').click();
-      assert.equal(await page.locator('#verify-ignored').inputValue(), 'v8-config-contract');
-      assert.equal(await page.locator('#verify-buffer').inputValue(), '3');
-      assert.equal(await page.locator('#verify-total-buffer').inputValue(), '12');
-      assert.equal(await page.locator('#verify-accepted').inputValue(), 'demo-model = upstream-model');
-      await page.locator('#verify-accepted').fill('');
-      await page.locator('#save-verification').click();
-      await page.waitForFunction(() => document.querySelector('#verification-status').textContent === '已保存并生效');
-      const cleared = await page.request.get(base + '/v8/management/config/plugins/configs/cpa-helper-plugin', { headers: { Authorization: 'Bearer preview-management' } });
-      assert.deepEqual((await cleared.json()).response_model_mismatch.accepted_models, {});
+      assert.equal(await page.locator('[data-tab="verification"], #verification-form').count(), 0);
       // Pin real v8 response shapes and exercise both sides of credential policy.
       const headerCredential = inventory.find(item => item.provider === 'claude');
       assert(headerCredential, 'header credential missing from the real CPA directory');
@@ -424,7 +416,7 @@ try {
       }
       assert.deepEqual(hostRequests, [], 'UI called deprecated host management APIs');
       assert.deepEqual(errors, []);
-      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, responsive layout, Host model sync with files/shared indexes/keyless/disabled credentials, model-free runtime-only exclusion with visible counts and complete Host double reads, exclusions/prefixes, atomic sync failures, explicit refresh stages/draft retention and prototype-header allow/deny routing.');
+      console.log('Browser smoke passed: session, masking, explicit save, request policy, reload, responsive layout, Host model sync with files/shared indexes/keyless/disabled credentials, model-free runtime-only exclusion with visible counts and complete Host double reads, exclusions/prefixes, atomic sync failures, explicit refresh stages, Key/TTL draft retention, removed response verification with inert legacy configuration and prototype-header allow/deny routing.');
     } finally { await browser.close(); }
     await cleanup();
   }

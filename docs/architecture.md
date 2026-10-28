@@ -44,8 +44,20 @@ CPA semantics.
    Reservations are keyed by request ID, survive policy changes, and are acquired
    only once across repeated interception. An in-progress intercept is fenced when
    completion arrives concurrently. Count-token operations do not acquire slots.
-6. CPA continues delivering usage to existing observers. This release registers no
-   usage hook; CPA-Helper remains the billing owner.
+6. The 0.1.10 Claude TTL feature freezes an optional per-Key TTL, validates
+   pinned configuration and marks the selected Claude request for final payload
+   rules. A public scheduler selection ID connects this frozen state to usage.
+   Unrestricted selections explicitly delegate to the same configured CPA builtin.
+7. CPA continues delivering usage to existing observers. The plugin's sole
+   `usage.handle` observation writes TTL execution metadata without token counts;
+   CPA-Helper remains the billing owner. The published 0.1.9 release predates this
+   feature. See [the TTL contract](claude-uniform-ttl.md) for prerequisites and limits.
+
+Request interception omits Body both before and after authentication. Policy and
+TTL use caller metadata, model IDs and headers. Response model verification has
+been removed: no raw-response or stream-chunk hook, body hashing, response buffer
+or verification state remains. The ordinary response hook only filters model lists
+and passes generation responses through. See [the removal record](response-verification-removal.md).
 
 Denials must be deterministic:
 
@@ -63,6 +75,7 @@ The first schema should support:
 
 - `policy_revision`: monotonically increasing JSON-safe integer
 - `keys`: hashed key identifier, enabled state, group bindings and concurrency limit
+- optional per-Key `claude_cache_ttl`: `5m` / `1h`; absence preserves CPA behavior
 - `groups`: group identifier and model rules
 - model rules with explicit allowlist and denylist semantics
 - `generated_at`, `contract_version`, and `plugin_version`; v1 has no expiry

@@ -1,11 +1,52 @@
 # 项目任务清单
 
-## 当前任务：CPA v8.0.45 兼容升级
+## 当前实施：v0.1.10 提交与发布
+
+- 用户授权：2026-10-28“提交并发布新版本”；范围为已完成的 TTL、响应核验移除、必要版本兼容、提交/推送及 GitHub release，不修改 CPA、Helper 或真实部署，不自动合并分支。
+- REL010-01 完成：版本/说明/schema/Helper 交接统一为 0.1.10，保留 v0.1.9 策略及目录读取并补升级回归；用户 AGENTS.md 和临时产物不纳入提交。
+- REL010-02 进行中：fmt/vet/test/race、目录 13/13、Edge、最终 DLL 三套真实 CPA fixture（51.668 秒）均通过；完成实际暂存审查后提交。
+- REL010-03 待办：推送提交及 v0.1.10 标签，等待现有 workflow 完成 Linux/Windows 构建和发布，补中文发布说明。
+- REL010-04 待办：下载正式产物核对 checksum、根目录及构建元数据，用发布 DLL 复核真实 CPA/TTL/界面，记录结果。
+- 本轮记录：[v0.1.10](v0.1.10-release.md)。此前“未发布/不提交”是各实施阶段的历史边界，本轮授权以上述发布任务为准。
+
+## 当前实施：移除响应模型核验
+
+- 用户授权：2026-10-28“直接把响应核验功能砍掉”；仅修改 Plugin，不改 CPA、不修改真实部署、不提交或发布。
+- 背景：用户运行发布版 v0.1.9，核验未开启；该版本仍无条件注册原始响应和流式回调，原始响应 RPC 会逐帧携带完整请求体。
+- 范围及验收：[移除记录](response-verification-removal.md)。既有 TTL 工作保留。
+- RMV-01 完成：核验实现、响应状态/缓冲、回调注册及专用运行时辅助方法已删除；请求前后均省略 Body；旧配置显式告警并忽略。
+- RMV-02 完成：管理接口、能力/健康字段、配置表单和独立脚本已删除；当前文档与 Helper 交接已更新。
+- RMV-03 完成：最终 DLL 的三套真实 CPA fixture（含顶层 TTL 80/80）49.959 秒通过；fmt/vet/test/race、目录 13/13、Edge、文档/JSON/diff 均通过。边界与一次性验证问题见[移除记录](response-verification-removal.md)。
+
+## 当前实施：Claude 单请求统一 TTL
+
+- 用户授权：2026-10-28“开始实现”；范围为 Plugin 实现及对接契约，不改 CPA、不修改真实部署、不提交或发布。
+- 已采纳：单次请求全为 5m 或全为 1h；Key 策略优先。旧混合 TTL 限制不再作为实现阻塞。
+- 需求：[PRD](claude-uniform-ttl-prd.md)；阶段：[实施计划](claude-uniform-ttl-plan.md)；已有证据：[可行性验证](claude-ttl-feasibility.md)。
+- TTL-01 完成：单请求契约、显式固定配置校验、公开 selection_id → execution_id 已用生产 DLL 验证。
+- TTL-02 完成：可选 Key 字段及严格事务校验；64 请求基础矩阵、跨 Key 并发、热更新/重试冻结与漂移拒绝。
+- TTL-03 完成：唯一 usage.handle、元数据查询与持久化、延迟/取消、重复/冲突/过期/未知处理测试通过。
+- TTL-04 完成：Key 编辑 UI、健康/能力、[Helper 对接及部署契约](claude-uniform-ttl.md)；Edge 与视检通过。
+- TTL-05 完成：fmt/vet/test/race、目录 13/13、真实生产 DLL TTL suite、既有 CPA suite 和 browser smoke；详见[验收记录](claude-uniform-ttl-verification.md)。
+- 本轮边界：Helper 消费端、真实 provider/账单与 Linux/Docker 未测；已有任意自定义 payload 不自动合并；未提交、推送或发布。
+
+### TTL 团队审查与 Helper 交接
+
+- 用户授权：2026-10-28 启动不超过 5 个 subagent 审查当前变更并修复；本轮使用 3 位审查者。
+- TTL-R01 完成：三位独立审查并交叉确认 P1 根控制遗漏、P3 损坏元数据幂等校验遗漏；两项修复均复审通过。
+- TTL-R02 完成：修复前实际失败；修复后根控制 80/80、原 64 基础与增强矩阵、损坏时间幂等回归及合法重复不延长留存均通过。
+- TTL-R03 完成：已核对 CPA-Helper 当前代码和 §28，[完整交接](claude-uniform-ttl-helper-handoff.md)已复审；Helper 工作区及 planning 状态未修改。
+- TTL-R04 完成：fmt/vet/test/race、最终 DLL、三套真实 Host fixture、13 项目录测试与 Edge smoke；详见[团队审查记录](claude-uniform-ttl-review.md)。
+
+
+## 已完成任务：CPA v8.0.45 兼容升级
+
+以下是已发布 v0.1.9 的历史任务与证据；其中响应核验、请求 Body 关联的旧要求已被当前移除任务替代。
 
 - 更新日期：2026-10-28。
 - 需求依据：[PRD](cpa-v8.0.45-prd.md)；执行顺序：[实施计划](cpa-v8.0.45-plan.md)。
 - 本清单是该升级的状态入口；需求及验收定义以 PRD 为准，已支持版本以 [compatibility.md](compatibility.md) 为准。
-- 当前状态：兼容实现、团队交叉审查、v0.1.9 发布及正式产物核验完成；[PR #6](https://github.com/xialss/CPA-Helper-Plugin/pull/6) 待合并。完整证据见 [验收记录](cpa-v8.0.45-verification.md) 和 [审查记录](cpa-v8.0.45-review.md)。
+- 当前状态：兼容实现、团队交叉审查、v0.1.9 发布及正式产物核验完成；[PR #6](https://github.com/xialss/CPA-Helper-Plugin/pull/6) 已合并（本轮只读核对 origin/main 的 merge commit `00464a7d5a228a63fa0ff90abceeb71166cce488`，没有执行合并）。完整证据见 [验收记录](cpa-v8.0.45-verification.md) 和 [审查记录](cpa-v8.0.45-review.md)。
 - 当前授权范围：2026-10-28 用户明确要求提交、提 PR、发布新版本；允许推送当前已审查分支及 v0.1.9 标签，由现有 workflow 构建并发布，不修改真实部署或自动合并 PR。
 - 状态：`完成` 有交付/证据；`待办` 尚未开始；`进行中` 有实际实施；`阻塞` 需记录具体条件。
 
