@@ -26,7 +26,7 @@ func configured(t *testing.T) *App {
 	if err := json.Unmarshal(env.Result, &registration); err != nil {
 		t.Fatal(err)
 	}
-	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || registration.Capabilities["response_stream_interceptor"] || registration.Capabilities["response_before_translator"] || registration.SchemaVersion != pluginabi.SchemaVersion {
+	if registration.Metadata.GitHubRepository == "" || registration.Metadata.Author == "" || !registration.Capabilities["scheduler"] || !registration.Capabilities["response_interceptor"] || registration.Capabilities["response_stream_interceptor"] || registration.Capabilities["response_before_translator"] || registration.SchemaVersion != RPCSchemaVersion {
 		t.Fatal("invalid CPA registration")
 	}
 	if registration.SchemaVersion != 7 || !registration.Capabilities["request_interceptor_omit_body_after"] || !registration.Capabilities["request_interceptor_omit_body_before"] {

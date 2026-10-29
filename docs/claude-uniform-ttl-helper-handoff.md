@@ -2,6 +2,8 @@
 
 更新：2026-10-28。接收工作区：`D:/Project/CPA-Helper`。本文是后续实施输入，不代表 Helper 已完成修改。
 
+2026-10-29 发布追加：v0.1.11 修复宿主 schema 协商，插件协议仍为 7、数据契约来源 `cpa_version` 仍为 v8.0.45；它不是实际 Host 版本门禁。接收方如校验 Plugin producer，应加入 0.1.11 的已知管理/目录组合，并保留以下能力探测、revision 和 TTL 来源语义。Host 新增兼容 schema 不需要 Helper 改写策略版本或目录 CPA 字段。发布与正式产物结果见 [v0.1.11 记录](v0.1.11-release.md)，本轮没有修改 Helper。
+
 ## 结论与范围
 
 **需要修改 CPA-Helper。** Plugin 可以独立执行已保存的 Key TTL，但当前 Helper 既不接受 Plugin 0.1.9、0.1.10 的兼容组合，也没有 TTL 编辑、执行元数据关联和 provenance 消费流程。只更新 Plugin 不会自动完成 Helper 的按 TTL 计费。
@@ -56,8 +58,8 @@ Plugin 工作区：
 
 ### 兼容和能力
 
-- 固定宿主 CPA v8.0.45，C ABI 1、RPC schema 7、策略 contract v1。
-- 本次发布版本为 0.1.10，状态和正式产物验收以 [发布记录](v0.1.10-release.md)为准；**已发布 0.1.9 DLL 不包含本次 TTL 能力**。0.1.10 仍须结合以下 feature probe，而非只凭版本号启用。
+- 数据契约来源和 SDK 固定 CPA v8.0.45，C ABI 1、插件 RPC schema 7、策略 contract v1；v0.1.11 已验证 Host v8.0.45/v8.0.47，宿主最大 schema ≥7，不设上限白名单。
+- TTL 首发版本为 0.1.10，证据见 [发布记录](v0.1.10-release.md)；后续 0.1.11 保留该能力并修复 schema 协商，见顶部追加。**已发布 0.1.9 DLL 不包含本次 TTL 能力**。新版本仍须结合以下 feature probe，而非只凭版本号启用。
 - 先验证已知管理兼容组合，再检测 `GET /capabilities`：`modules` 包含 `claude_cache_ttl`，`policy_fields` 包含 `keys[].claude_cache_ttl`。
 - 调用 `GET /claude-ttl/requirements`，要求 `metadata_version == "v1"`，并检查所需规则/配置方式；health 中 `claude_cache_ttl.status` 为 `configured` 才具备已校验配置。`disabled` / `unavailable` 不能显示“TTL 已生效”。
 - `configured` 只表示通过固定配置文件校验；不是 live provider 接受 TTL 的证明。实际绝对配置路径和任意文件漂移后重载的前提见部署文档。

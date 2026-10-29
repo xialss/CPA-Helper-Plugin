@@ -48,12 +48,12 @@ updates.
 
 ## Publish an update
 
-For a separately authorized release, push the semantic version tag `v0.1.10` to this repository. The release
+For a separately authorized release, push the semantic version tag `v0.1.11` to this repository. The release
 workflow builds Linux amd64 and Windows amd64 libraries and publishes these assets:
 
 ```text
-cpa-helper-plugin_0.1.10_linux_amd64.zip
-cpa-helper-plugin_0.1.10_windows_amd64.zip
+cpa-helper-plugin_0.1.11_linux_amd64.zip
+cpa-helper-plugin_0.1.11_windows_amd64.zip
 checksums.txt
 ```
 

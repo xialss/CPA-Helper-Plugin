@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.10"
+var Version = "0.1.11"
 
 func compatiblePluginVersion(version string) bool {
 	// Older producers remain readable; optional fields are advertised by capability.
-	return version == Version || version == "0.1.9" || version == "0.1.8" || version == "0.1.7" || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
+	return version == Version || version == "0.1.10" || version == "0.1.9" || version == "0.1.8" || version == "0.1.7" || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.

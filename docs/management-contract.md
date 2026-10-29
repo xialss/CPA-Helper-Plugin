@@ -23,7 +23,12 @@ Model-list filtering is controlled through CPA's official plugin configuration:
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, target CPA v8.0.45, plugin version 0.1.10, C ABI 1 and RPC schema 7.
+reports its current value, contract provenance CPA v8.0.45, plugin version 0.1.11, C ABI 1 and RPC schema 7.
+The schema is the plugin-declared RPC contract, not the host's maximum schema.
+It comes from the adapter's independent `RPCSchemaVersion`; updating the SDK must
+not change registration, minimum Host requirements or this reported value by itself.
+`cpa_version` identifies the pinned contract target; newer-host verification and
+the v8.0.47 registration fix are recorded in [compatibility.md](compatibility.md).
 `GET /v8/management/plugins` exposes each configuration field's `default`,
 including the state directory, enabled model-list filtering, and optional Claude TTL.
 
@@ -68,7 +73,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.10",
+  "plugin_version": "0.1.11",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -77,8 +82,8 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.10` accepts snapshots produced by `0.1.0` through `0.1.9`;
-all eleven supported producer versions are enumerated in the schema. The policy contract remains
+Plugin `0.1.11` accepts snapshots produced by `0.1.0` through `0.1.10`;
+all twelve supported producer versions are enumerated in the schema. The policy contract remains
 `v1`, and existing policy state does not require migration. Binary rollback must restore
 the matching pre-upgrade state backup; do not rewrite producer metadata to bypass compatibility.
 The complete `PUT /policy` operation is the external administration interface for
@@ -195,7 +200,7 @@ directory; `health.status` is `unavailable` and the initial ETag is `"0"`.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.10",
+  "plugin_version": "0.1.11",
   "cpa_version": "v8.0.45",
   "catalog_revision": 1,
   "generated_at": "2026-10-28T00:00:00Z",
@@ -217,9 +222,9 @@ the active catalog until restart reconciles disk state.
 `/health.model_catalog` reports availability, revision, generated/accepted times,
 age, credential count, last rejection, snapshot `plugin_version`, snapshot
 `cpa_version` and `refresh_required`. Valid format-1 v1 catalogs from producer
-0.1.9/CPA v8.0.45 and 0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
+0.1.10/CPA v8.0.45, 0.1.9/CPA v8.0.45 and 0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
 unchanged and `refresh_required: true`. Startup does not rewrite them. New writes
-require the current 0.1.10/v8.0.45 envelope and the next revision; exact historical
+require the current 0.1.11/v8.0.45 envelope and the next revision; exact historical
 idempotency retries still return their original receipt. Unknown versions or
 corrupt state remain errors. This is independent of policy health:
 model-only policies and unrestricted callers do not need credential associations.

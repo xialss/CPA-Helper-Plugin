@@ -848,9 +848,9 @@ openai-compatibility:
 		}
 	}
 	stop()
-	// Reload both verified older catalogs without rewriting their
+	// Reload verified older catalogs without rewriting their
 	// provenance, then explicitly publish and reload the next current revision.
-	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}} {
+	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}, {"0.1.10", "v8.0.45"}} {
 		legacy := modelcatalog.Clone(modelSnapshot)
 		legacy.PluginVersion, legacy.CPAVersion, legacy.Revision = producer[0], producer[1], 7
 		legacy.GeneratedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)

@@ -20,11 +20,23 @@ Use `httptest` for generic management calls. The suite must verify:
 
 ## CPA compatibility fixture
 
-Keep a fixture pinned to the single current CPA release (v8.0.45). It should
+Keep the SDK pinned to v8.0.45 and run the fixture against each explicitly verified
+Host (the original v8.0.45 and the v8.0.47 negotiation regression). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
 completion cleanup and official management resource registration. Published 0.1.9
 has no usage callback; the 0.1.10 TTL feature registers the sole `usage.handle`
 observer for execution metadata.
+
+`TestRegistrationNegotiatesHostMaximumSchema` covers registration and reconfigure
+with host maxima 0/1/6/7/8/9/100/65535/uint32-max and a synthetic unknown registration
+field. It rejects hosts below 7 without changing policy state,
+keeps the plugin-declared schema at 7 for newer hosts, preserves both body-omission
+flags, reports that same schema through capabilities, and cannot enable unused
+raw-body patch or removed response hooks. This negotiation matrix does not certify
+unknown future CPA releases. The schema belongs to the adapter, independently of
+the imported SDK's latest schema. Use an isolated modfile to build this same test
+with SDK v8.0.47 (whose latest schema is 8) and confirm Host 7 is still accepted;
+keep the repository's pinned go.mod/go.sum unchanged for that regression.
 
 ## Required commands
 
@@ -51,7 +63,9 @@ excluding mixed TTLs, using uniform final rules and a pure-TTL synthetic
 upstream. A pass verifies request TTL enforcement on the tested paths, not
 upstream acceptance or the proposed Helper metadata integration.
 
-Download the official plugin-enabled CPA v8.0.45 binary for the target platform.
+Download the official plugin-enabled CPA binary for the target platform. Use
+v8.0.47 to reproduce/check the schema negotiation defect and rerun on v8.0.45 to
+protect the pinned baseline; set `CPA_BINARY` separately for each run.
 Build the plugin with a C compiler for the same architecture, then run:
 
 ```powershell
@@ -64,6 +78,18 @@ Linux uses `dist/cpa-helper-plugin.so` and `CPA_BINARY=/path/to/cli-proxy-api`.
 `CPA_PLUGIN_BINARY` optionally overrides the dynamic library path. Without
 `CPA_BINARY`, the integration test explicitly skips; a normal `go test ./...`
 pass alone does not certify CPA compatibility.
+
+For the schema-negotiation fix, run the compatibility/management fixture and both
+production TTL suites against both official Hosts:
+
+```powershell
+go test ./integration -run '^(TestCPACompatibility|TestClaudeUniformTTLProduction(TopLevel)?)$' -count=1 -timeout 240s
+```
+
+Run `npm run test:ui` with the fixed DLL and official v8.0.47 as well. The published
+v0.1.10 DLL is the negative fixture and must still reproduce `CPA schema 7 is required`
+on v8.0.47; do not overwrite release assets to make it appear fixed. Captured source,
+checksums and results are in [the fix record](cpa-v8.0.47-schema-negotiation.md).
 
 The fixture creates an isolated temporary CPA config, state directory, loopback
 port and mock OpenAI-compatible upstream. It never reads deployment config or
@@ -120,7 +146,7 @@ disabled owners, every supported list format, group merges, policy hot updates,
 missing/incomplete directories, immutable indexes, transactional persistence,
 durable receipts, corruption, and uncertain durability. These reads make no
 upstream requests and reserve no concurrency. The real fixture also reloads a
-valid format-1 0.1.9/v8.0.45 and 0.1.8/v8.0.32 catalogs, checks unchanged disk bytes and provenance,
+valid format-1 0.1.10/v8.0.45, 0.1.9/v8.0.45 and 0.1.8/v8.0.32 catalogs, checks unchanged disk bytes and provenance,
 publishes revision 8 after revision 7, restarts, replays the old durable receipt,
 and verifies that policy state is unchanged. Unit fixtures cover old-envelope
 rejection on new writes, stale/conflicting retries and failed/uncertain upgrade writes.

@@ -27,7 +27,9 @@ CPA 官方插件管理 -> 注册、生命周期与插件资源
 
 ## 构建与安装
 
-需要 Go 1.26.10+、匹配架构的 C 编译器，以及启用了插件支持的 CPA v8.0.45（C ABI 1 / RPC schema 7）。Windows 使用 MinGW-w64 UCRT 工具链。只支持发布时验证过的单一 CPA 正式版，不维护旧版 Host 适配器；每次构建锁定精确版本。版本与验证记录见 `docs/compatibility.md`。
+需要 Go 1.26.10+、匹配架构的 C 编译器，以及启用了插件支持的 CPA。SDK 固定 v8.0.45（C ABI 1 / 插件 RPC schema 7），Windows 使用 MinGW-w64 UCRT 工具链。v0.1.11 修复了旧 v0.1.10 在 CPA v8.0.47 上的注册失败，按宿主最大 schema 协商；已验证的 Host 为 v8.0.45 和 v8.0.47。发布状态和正式产物验收见 [v0.1.11 记录](docs/v0.1.11-release.md)，根因及修复证据见 [协商修复](docs/cpa-v8.0.47-schema-negotiation.md)。
+
+兼容按协议能力判断：宿主支持 C ABI 1、至少 RPC schema 7 及插件所依赖的接口即可协商，schema 没有上限白名单。插件独立声明自己实现的 schema 7；CPA 增加 schema 8、9 或后续兼容协议时继续使用该契约，升级 SDK 也不会自动抬高要求。文档中的 CPA 固定版本用于复现和数据契约来源，不是运行版本锁。真实 ABI、必需回调或管理接口出现破坏性变化时才需要适配。
 
 ```powershell
 go build -buildmode=c-shared -o dist/cpa-helper-plugin.dll ./cmd/cpa-helper-plugin
@@ -68,7 +70,7 @@ CPA 重载配置时会卸载已禁用或未选中的插件。请在持久化配�
 
 CPA 可能保留没有元数据且无注册模型的 Host 条目（例如停用的 AIStudio 内存凭据）。这类经过完整校验、不拥有任何模型的条目不纳入目录，同步通知和运行状态显示排除数量；不推断其来源或启用状态。已知元数据的空模型凭据仍保留，未知的非空模型所有者或任何身份错配仍使整个同步失败。双读也比较所有未纳入目录的条目。
 
-有效的插件 0.1.9 / CPA v8.0.45 和 0.1.8 / CPA v8.0.32 目录可兼容读取，健康状态显示其原始来源和需要重同步；启动不改写文件，下一次成功同步才写入新目标的下一修订。未知或损坏状态仍需恢复备份。
+有效的插件 0.1.10、0.1.9 / CPA v8.0.45 和 0.1.8 / CPA v8.0.32 目录可兼容读取，健康状态显示其原始来源和需要重同步；启动不改写文件，下一次成功同步才写入新目标的下一修订。未知或损坏状态仍需恢复备份。
 
 使用单一请求头携带 Key（`Authorization`、`x-api-key` 或 `x-goog-api-key`）时按规则过滤。CPA v8.0.45 仍未向列表钩子提供已认证身份或 URL；缺少请求头身份（例如 URL 参数认证）或存在多个不同请求头 Key 时，保留 CPA 原始目录，并通过 `X-CPA-Helper-Model-List: unfiltered-identity-unavailable` 和日志标明原因。CPA 仍先执行认证；这只允许已通过 CPA 认证的请求放宽目录展示，不放宽实际生成权限。错误请求头 Key 与有效 URL Key 混用仍可能套用错误的展示规则。策略不可用或目录解析失败继续返回 JSON `error` 和 `X-CPA-Helper-Error`；受宿主接口限制，HTTP 状态仍为 200。模型列表不是权限安全边界。
 
@@ -89,7 +91,7 @@ Key 独立拒绝规则、分组名称及 ID，或未进入合并允许列表。�
 关闭只恢复 CPA 原始模型目录，实际生成的模型权限、凭据路由和并发限制继续生效。
 也可通过官方管理接口 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin`
 提交 `{"model_list_filter_enabled":false}`；需要 CPA 管理密钥。
-插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.10 和目标 CPA v8.0.45。
+插件 `/v1/capabilities` 返回当前配置、插件版本 0.1.11 和数据契约来源 CPA v8.0.45；后者不是宿主运行版本门禁。
 CPA 官方插件管理接口还会通过配置字段的 `default` 返回插件实际采用的默认值。
 
 ## v0.1.10 的移除变更

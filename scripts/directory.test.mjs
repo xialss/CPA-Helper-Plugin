@@ -102,7 +102,7 @@ test('model catalog joins authoritative host fingerprints and persists only rout
     { name: 'catalog', 'base-url': 'https://catalog.invalid', keys: [{ 'api-key': 'private-upstream-secret', auth_index: 'config-index' }] },
   ] } }, [{ id: 'oauth-fixture.json', auth_index: 'file-index', provider: 'codex', source: 'file', weight: 0 }]);
   const registered = { credentials: credentials.map(c => ({ ref: c.ref, auth_index: c.auth_index, provider: c.provider, models: ['team/public-alias', 'shared'] })) };
-  const result = context.cpaModelCatalog(credentials, { contract_version: 'v1', plugin_version: '0.1.10', cpa_version: 'v8.0.45', catalog_revision: 1 }, registered);
+  const result = context.cpaModelCatalog(credentials, { contract_version: 'v1', plugin_version: '0.1.11', cpa_version: 'v8.0.45', catalog_revision: 1 }, registered);
   const stored = JSON.parse(JSON.stringify(result));
   assert.equal(stored.credentials.find(c => c.source === 'auth-files').enabled, false);
   assert.deepEqual(stored.credentials[0].models, ['shared', 'team/public-alias']);

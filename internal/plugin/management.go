@@ -105,7 +105,7 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		return
 	}
 	if r.Method == "GET" && path == "/capabilities" {
-		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": pluginabi.ABIVersion, "schema_version": pluginabi.SchemaVersion, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "claude_cache_ttl": a.ttl.health(), "modules": []string{"model_rules", "model_list_filter", "credential_routes", "concurrency", "claude_cache_ttl"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].claude_cache_ttl", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
+		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": pluginabi.ABIVersion, "schema_version": RPCSchemaVersion, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "claude_cache_ttl": a.ttl.health(), "modules": []string{"model_rules", "model_list_filter", "credential_routes", "concurrency", "claude_cache_ttl"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].claude_cache_ttl", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
 		return
 	}
 	if r.Method == "GET" && path == "/claude-ttl/requirements" {

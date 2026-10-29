@@ -64,7 +64,7 @@ func Compile(s Snapshot) (*Engine, error) {
 // CompileStored accepts verified older producers only when reloading durable
 // state. It preserves the old provenance and does not relax new-write validation.
 func CompileStored(s Snapshot) (*Engine, error) {
-	if (s.PluginVersion == "0.1.8" && s.CPAVersion == "v8.0.32") || (s.PluginVersion == "0.1.9" && s.CPAVersion == "v8.0.45") {
+	if (s.PluginVersion == "0.1.8" && s.CPAVersion == "v8.0.32") || ((s.PluginVersion == "0.1.9" || s.PluginVersion == "0.1.10") && s.CPAVersion == "v8.0.45") {
 		return compile(s)
 	}
 	return Compile(s)

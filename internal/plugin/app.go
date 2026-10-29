@@ -26,8 +26,12 @@ import (
 // ID is both the CPA plugin filename and configuration identifier.
 const ID = "cpa-helper-plugin"
 
-// CPAVersion is the single release targeted by this build.
+// CPAVersion identifies the pinned data-contract source, not a host-version gate.
 const CPAVersion = catalog.CPAVersion
+
+// RPCSchemaVersion is the implemented wire contract, independent of the SDK's
+// latest schema. Version 7 is required to omit request bodies in both phases.
+const RPCSchemaVersion uint32 = 7
 
 // BasePath is authenticated by CPA's management middleware.
 const BasePath = "/v0/management/plugins/" + ID + "/v1"
@@ -85,8 +89,10 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, errors.New("invalid registration payload")
 		}
-		if req.SchemaVersion != pluginabi.SchemaVersion {
-			return nil, fmt.Errorf("CPA schema %d is required", pluginabi.SchemaVersion)
+		// The host advertises its maximum; registration declares our implemented
+		// schema below. Newer hosts can retain this contract without new hooks.
+		if req.SchemaVersion < RPCSchemaVersion {
+			return nil, fmt.Errorf("CPA schema %d or newer is required (host advertised schema %d)", RPCSchemaVersion, req.SchemaVersion)
 		}
 		cfg := config{StateDir: filepath.Join("plugins", "cpa-helper-state"), Enabled: true, ModelListFilterEnabled: true}
 		if len(bytes.TrimSpace(req.ConfigYAML)) > 0 {
@@ -133,7 +139,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			slog.Warn("response_model_mismatch has been removed; legacy configuration is ignored")
 		}
 		return ok(registration{
-			SchemaVersion: pluginabi.SchemaVersion,
+			SchemaVersion: RPCSchemaVersion,
 			Metadata: pluginapi.Metadata{
 				Name: ID, Version: policy.Version, Author: "CPA-Helper",
 				GitHubRepository: "https://github.com/xialss/CPA-Helper-Plugin", Logo: ResourcePath + "/logo.svg",

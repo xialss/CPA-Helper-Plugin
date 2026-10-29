@@ -3,7 +3,66 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Current target: CPA v8.0.45
+## Release candidate 0.1.11
+
+Plugin 0.1.11 ships schema negotiation using C ABI 1 and the independently
+implemented plugin RPC schema 7. Official CPA v8.0.45 and v8.0.47 are the tested
+Hosts; there is no exact CPA release or Host-schema upper-bound whitelist.
+The SDK and `cpa_version` provenance stay v8.0.45. Policies from 0.1.0 through
+0.1.10 and saved catalogs from 0.1.10/v8.0.45, 0.1.9/v8.0.45 and 0.1.8/v8.0.32
+remain readable without a startup rewrite. New catalog publications use
+0.1.11/v8.0.45. Back up state before upgrade; binary rollback restores matching
+binaries and pre-upgrade state. Publication and official artifact validation
+are tracked in [the v0.1.11 release record](v0.1.11-release.md).
+
+## Compatibility policy: negotiate the implemented contract
+
+The plugin requires native C ABI 1 and RPC schema 7 or newer at the Host. A Host
+schema is a maximum supported contract, not an exact version whitelist. The
+plugin declares its own implemented `RPCSchemaVersion` (7), independently of the
+SDK's latest `pluginabi.SchemaVersion`, and keeps using that contract when a Host
+adds schema 8, 9 or later. Updating an SDK must not implicitly raise this minimum
+or enable new hooks. Schema 7 is required by the request-body omission capability.
+
+Pinned SDK revisions and verified Host releases are build/reproduction evidence;
+`cpa_version` is the pinned data-contract provenance, not a runtime Host-version
+gate. Additive schemas and unknown registration fields do not require a plugin
+release. Actual incompatible native ABI or required callback/route semantics
+remain compatibility boundaries and must fail explicitly rather than bypass policy.
+Future-schema simulations and a newer-SDK build regression protect this rule;
+they are not claims that an unknown future Host has passed end-to-end tests.
+The same adapter passed its registration/removal tests built against the official
+v8.0.47 SDK (latest schema 8) via an isolated modfile, including Host 7 acceptance
+and schema-7 management output. The project's pinned SDK files were not changed.
+The final DLL with the independent schema constant passed the real CPA/TTL suites
+on official v8.0.47 (57.473 seconds) and v8.0.45 (48.945 seconds), plus v8.0.47 Edge.
+
+## Fix included in 0.1.11: host schema negotiation on CPA v8.0.47
+
+On 2026-10-29 a user reported Plugin v0.1.10 failing on official CPA v8.0.47
+(`90c447d3a8727d115aa7552ec93ce023736ed492`) with `CPA schema 7 is required`.
+CPA v8.0.47 advertises host RPC schema 8, still uses native C ABI 1, and accepts
+plugins declaring an older supported schema. The plugin incorrectly treated the
+host's maximum schema as an exact required match.
+
+The fix keeps the pinned v8.0.45 SDK and the plugin's declared schema 7, accepts
+host maxima at least 7, and rejects older hosts with both required and received
+schema in the error. It does not opt into schema-8 raw-body patch callbacks.
+Target provenance (`cpa_version=v8.0.45`), policy/catalog envelopes, TTL payload
+contract, body-omission flags and removed verification hooks remain unchanged.
+This is negotiation of the pinned contract, not an unverified SDK migration or a
+promise that every future CPA version is compatible. Official v8.0.47 and the
+existing v8.0.45 binary both passed the three real-host CPA/TTL suites with the
+fixed DLL (45.050 and 40.169 seconds respectively); v8.0.47 Edge smoke, fmt,
+vet, all Go tests and race passed on Windows amd64. The published v0.1.10 DLL
+reproduced the reported failure on the same v8.0.47 Host. The fix remained local
+at that implementation stage; Linux dynamic loading was not tested. The user
+subsequently authorized release 0.1.11; its publication and final-version results
+are recorded separately above. Existing v0.1.10 assets remain unchanged.
+
+Investigation, reproduction and final evidence: [schema negotiation fix](cpa-v8.0.47-schema-negotiation.md).
+
+## Published baseline: Plugin 0.1.10 / CPA v8.0.45
 
 Plugin 0.1.10 targets CPA v8.0.45
 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`), C ABI 1 / RPC schema 7,
@@ -395,6 +454,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.11 | v8.0.45 and v8.0.47 (`90c447d3a8727d115aa7552ec93ce023736ed492`); pinned SDK v8.0.45 | C ABI 1 / host schema at least 7, plugin schema 7 | release candidate; final-version validation in progress | Accepts compatible newer-host schema maxima while retaining body omission and the pinned plugin contract |
 | 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
 | 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
 | 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |

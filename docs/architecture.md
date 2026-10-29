@@ -21,6 +21,13 @@ Policy code must not know about CPA C function tables or HTTP transport. Adapter
 translates external payloads into domain inputs and translates domain decisions back
 into CPA responses.
 
+Registration treats the Host's schema as its maximum. The adapter declares its
+own `RPCSchemaVersion` independently of the SDK's latest schema and accepts Hosts
+that can serve it, without an exact CPA release or schema upper-bound whitelist.
+The minimum remains 7 because both request phases omit bodies; a newer SDK must
+not silently raise it. Additive registration fields are ignored. Public required
+callbacks, management routes and native C ABI remain explicit contracts.
+
 ## Control planes
 
 - CPA official plugin management owns registration, lifecycle, plugin resource routing,
