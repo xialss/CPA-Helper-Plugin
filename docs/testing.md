@@ -23,9 +23,9 @@ Use `httptest` for generic management calls. The suite must verify:
 Keep the SDK pinned to v8.0.45 and run the fixture against each explicitly verified
 Host (the original v8.0.45 and the v8.0.47 negotiation regression). It should
 exercise the plugin entry point, hook registration, caller metadata, model decision,
-completion cleanup and official management resource registration. Published 0.1.9
-has no usage callback; the 0.1.10 TTL feature registers the sole `usage.handle`
-observer for execution metadata.
+completion cleanup and official management resource registration. The working tree
+removes the usage callback introduced by the historical 0.1.10 TTL feature.
+Registration must not advertise `usage_plugin`; direct `usage.handle` returns 404.
 
 `TestRegistrationNegotiatesHostMaximumSchema` covers registration and reconfigure
 with host maxima 0/1/6/7/8/9/100/65535/uint32-max and a synthetic unknown registration
@@ -52,16 +52,14 @@ to mark a release supported.
 
 ## Real CPA fixture and management smoke test
 
-The optional, diagnostic-only Claude TTL feasibility fixture is documented in
-[claude-ttl-feasibility.md](claude-ttl-feasibility.md). It uses a separate probe
-under `integration/testdata/ttlprobe`, requires `CPA_TTL_PROBE_BINARY` as well as
-`CPA_BINARY`, and must never be installed in a real deployment. It proves both
-supported mechanisms and blocking counterexamples; a pass does not certify the
-original per-Key TTL and exact mixed-billing feature.
-The revised `TestClaudeUniformTTLFeasibility` checks the user-approved scope
-excluding mixed TTLs, using uniform final rules and a pure-TTL synthetic
-upstream. A pass verifies request TTL enforcement on the tested paths, not
-upstream acceptance or the proposed Helper metadata integration.
+TTL production/feasibility fixtures and the diagnostic probe have been removed
+with the feature. Historical results remain in [the old feasibility record](claude-ttl-feasibility.md).
+Current removal regressions cover legacy YAML, no usage capability/callback,
+absent management/UI/health surfaces, no request/header mutation, CPA scheduler
+delegation, and no metadata IO. Stored-policy tests cover old canonical receipt
+digests, unchanged startup bytes, replay/conflict/new-TTL rejection, retained
+permission/concurrency rules, rollback, subsequent normal writes and damaged
+state. See [the removal record](claude-ttl-removal.md).
 
 Download the official plugin-enabled CPA binary for the target platform. Use
 v8.0.47 to reproduce/check the schema negotiation defect and rerun on v8.0.45 to
@@ -79,11 +77,10 @@ Linux uses `dist/cpa-helper-plugin.so` and `CPA_BINARY=/path/to/cli-proxy-api`.
 `CPA_BINARY`, the integration test explicitly skips; a normal `go test ./...`
 pass alone does not certify CPA compatibility.
 
-For the schema-negotiation fix, run the compatibility/management fixture and both
-production TTL suites against both official Hosts:
+Run the compatibility/management fixture against both official Hosts:
 
 ```powershell
-go test ./integration -run '^(TestCPACompatibility|TestClaudeUniformTTLProduction(TopLevel)?)$' -count=1 -timeout 240s
+go test ./integration -run '^TestCPACompatibility$' -count=1 -timeout 240s
 ```
 
 Run `npm run test:ui` with the fixed DLL and official v8.0.47 as well. The published
@@ -146,13 +143,17 @@ disabled owners, every supported list format, group merges, policy hot updates,
 missing/incomplete directories, immutable indexes, transactional persistence,
 durable receipts, corruption, and uncertain durability. These reads make no
 upstream requests and reserve no concurrency. The real fixture also reloads a
-valid format-1 0.1.10/v8.0.45, 0.1.9/v8.0.45 and 0.1.8/v8.0.32 catalogs, checks unchanged disk bytes and provenance,
+valid format-1 0.1.11/v8.0.45, 0.1.10/v8.0.45, 0.1.9/v8.0.45 and 0.1.8/v8.0.32 catalogs, checks unchanged disk bytes and provenance,
 publishes revision 8 after revision 7, restarts, replays the old durable receipt,
 and verifies that policy state is unchanged. Unit fixtures cover old-envelope
 rejection on new writes, stale/conflicting retries and failed/uncertain upgrade writes.
 
-The Edge fixture checks automatic management-session catalog sync, registered
-public prefixes, exclusions, file/config/keyless/disabled credentials, actual
+The Edge fixture checks automatic management-session catalog sync, the running
+CPA version from `X-CPA-VERSION` while preserving the pinned catalog envelope,
+explicit missing-version display and restoration when the header returns,
+an unusable saved catalog without a producer and its retained error details,
+absence of contract/catalog revision/catalog status UI rows, registered public
+prefixes, exclusions, file/config/keyless/disabled credentials, actual
 relative file IDs and distinct IDs sharing an auth_index. Failed Host reads and
 model-set changes during double-read do not partially publish a catalog. Directory unit tests
 verify actual file/config auth IDs instead of auth_index, rejection of malformed
@@ -162,7 +163,8 @@ or external provider credentials are used by these fixtures. Opening the panel
 and ordinary sync send zero source-refresh requests. Explicit refresh is tested
 against the real local-model route, plus refresh failure and post-refresh sync
 failure; each click sends one POST and preserves the last accepted directory.
-Separate failed-save tests retain Key and TTL drafts.
+Separate failed-save tests retain Key and concurrency drafts; TTL controls and
+management/capabilities are absent even with enabled legacy YAML.
 The post-review fixture also creates an AIStudio runtime-only credential over
 `/v1/ws`, disables it through the official status route, and checks that CPA hides
 its metadata while the Host retains its empty model set. Synchronization excludes
@@ -245,23 +247,12 @@ The Linux artifact built on Debian bookworm targets glibc systems, not musl/Alpi
 
 ## v8.0.45 acceptance record
 
-The 0.1.10 production TTL feature has an additional real-host fixture:
-
-```powershell
-$env:CPA_BINARY = 'absolute/path/to/cli-proxy-api.exe'
-$env:CPA_PLUGIN_BINARY = 'absolute/path/to/dist/cpa-helper-plugin.dll'
-go test ./integration -run '^TestClaudeUniformTTLProduction(TopLevel)?$' -v -count=1
-```
-
-It loads the production library into isolated CPA v8.0.45, installs the exact
-supported rules and uses synthetic keys/upstreams. It checks native Claude and
-Chat, streaming, both profiles, explicit empty breakpoints, concurrent callers,
-policy changes between failed/successful attempts, CPA fallback, exact stock
-execution joins, management auth, non-Claude isolation and configuration drift.
-The TopLevel suite covers automatic root controls (bare/5m/1h), conditionally
-matched root normalization, explicit mode, empty/absent root controls, both
-profiles and streaming. Existing rootless cases assert no root is introduced.
-It does not verify live Anthropic acceptance or the Helper billing consumer.
+Historical production TTL results are preserved in
+[the old TTL acceptance record](claude-uniform-ttl-verification.md); those test
+implementations and the feature have been removed from the current working tree.
+`TestCPACompatibility` now also loads both historical TTL producer versions,
+checks unchanged disk state and exact receipt replay, rejects new TTL writes,
+preserves model filtering and ignores an invalid historical metadata path.
 
 See [cpa-v8.0.45-verification.md](cpa-v8.0.45-verification.md) for the actual
 2026-10-28 Windows/UCRT results and A-01–A-15 evidence. Go 1.26.10 is the minimum

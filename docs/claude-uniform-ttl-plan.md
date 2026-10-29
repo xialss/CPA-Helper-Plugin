@@ -1,5 +1,7 @@
 # Claude 单请求 TTL 实施计划
 
+2026-10-29：用户要求移除 TTL，本计划已被 [TTL 移除记录](claude-ttl-removal.md)取代。下文仅为历史实施过程。
+
 2026-10-28。需求以 [PRD](claude-uniform-ttl-prd.md) 为准；机制证据见 [可行性验证](claude-ttl-feasibility.md)。
 
 | 阶段 | 交付与完成条件 | 状态 |

@@ -67,7 +67,7 @@ func TestRegistrationNegotiatesHostMaximumSchema(t *testing.T) {
 						t.Fatalf("negotiation lost %s", capability)
 					}
 				}
-				for _, capability := range []string{"request_interceptor_patch_body_before", "request_interceptor_patch_body_after", "request_body_patcher_before", "request_body_patcher_after", "response_stream_interceptor", "response_before_translator"} {
+				for _, capability := range []string{"request_interceptor_patch_body_before", "request_interceptor_patch_body_after", "request_body_patcher_before", "request_body_patcher_after", "response_stream_interceptor", "response_before_translator", "usage_plugin"} {
 					if reg.Capabilities[capability] {
 						t.Fatalf("negotiation enabled unused capability %s", capability)
 					}

@@ -5,7 +5,7 @@
   const $ = id => document.getElementById(id);
   let token = "", snapshot = null, health = null, dirty = false, busy = false, editing = null, session = 0;
   let keys = [], credentials = [], models = [];
-  let pluginVersion = "", cpaVersion = "";
+  let pluginVersion = "", cpaContractVersion = "", cpaHostVersion = "";
   let catalogSync = null;
   const clone = value => structuredClone(value);
   const icons = () => lucide.createIcons();
@@ -40,6 +40,8 @@
     if (generation !== session) throw new Error("连接已变更");
     let result; try { result = await response.json(); } catch { throw new Error(`响应格式错误 (${response.status})`); }
     if (!response.ok) throw new Error(result?.error?.message || result?.error || `请求失败 (${response.status})`);
+    const hostVersion = response.headers.get("X-CPA-VERSION")?.trim();
+    if (hostVersion) cpaHostVersion = hostVersion;
     return result;
   }
   async function confirmAction(title, text) { $("confirm-title").textContent = title; $("confirm-text").textContent = text; $("confirm").returnValue = ""; $("confirm").showModal(); return new Promise(resolve => $("confirm").addEventListener("close", () => resolve($("confirm").returnValue === "ok"), { once: true })); }
@@ -66,8 +68,9 @@
     const result = items.slice(); result[index] = value; return result;
   }
   async function load() {
+    cpaHostVersion = "";
     const [p, h, caps] = await Promise.all([api(base + "/policy"), api(base + "/health"), api(base + "/capabilities")]);
-    pluginVersion = caps.plugin_version; cpaVersion = caps.cpa_version;
+    pluginVersion = caps.plugin_version; cpaContractVersion = caps.cpa_version;
     $("plugin-version").textContent = "PLUGIN / " + pluginVersion;
     snapshot = p; health = h; dirty = false;
     $("workspace").hidden = false;
@@ -81,7 +84,7 @@
     const revision = current.health?.catalog_revision;
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("插件模型目录修订无效");
     const next = cpaModelCatalog(nextCredentials, {
-      contract_version: "v1", plugin_version: pluginVersion, cpa_version: cpaVersion,
+      contract_version: "v1", plugin_version: pluginVersion, cpa_version: cpaContractVersion,
       catalog_revision: revision + 1, generated_at: new Date().toISOString(),
     }, registered);
     const [latestConfig, latestDirectory, latestRegistered] = await Promise.all([api("/v8/management/config"), api("/v8/management/credentials"), api(base + "/credential-models")]);
@@ -136,9 +139,8 @@
     }
     $("groups-empty").hidden = snapshot.groups.length > 0;
     $("health-details").replaceChildren();
-    for (const [label, value] of [["状态", health.status], ["契约", health.contract_version], ["插件版本", health.plugin_version], ["最近同步", new Date(health.accepted_at).toLocaleString()], ["当前并发", Object.values(health.active || {}).reduce((a, b) => a + b, 0)], ["最近错误", health.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
-    if (health.model_catalog) for (const [label, value] of [["模型目录状态", health.model_catalog.status], ["模型目录修订", health.model_catalog.catalog_revision], ["模型目录来源", health.model_catalog.cpa_version ? `${health.model_catalog.cpa_version} / 插件 ${health.model_catalog.plugin_version}${health.model_catalog.refresh_required ? "（需要重新同步）" : ""}` : "尚未同步"], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
-    if (health.claude_cache_ttl) for (const [label, value] of [["Claude TTL", health.claude_cache_ttl.status], ["TTL 元数据来源", health.claude_cache_ttl.ttl_source], ["TTL 未关联 Usage", health.claude_cache_ttl.unknown_usage], ["TTL 错误", health.claude_cache_ttl.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    for (const [label, value] of [["状态", health.status], ["插件版本", health.plugin_version], ["最近同步", new Date(health.accepted_at).toLocaleString()], ["当前并发", Object.values(health.active || {}).reduce((a, b) => a + b, 0)], ["最近错误", health.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
+    if (health.model_catalog) for (const [label, value] of [["模型目录来源", health.model_catalog.catalog_revision ? health.model_catalog.plugin_version ? `CPA ${cpaHostVersion || "版本未报告"} / 插件 ${health.model_catalog.plugin_version}${health.model_catalog.refresh_required ? "（需要重新同步）" : ""}` : "来源不可用" : "尚未同步"], ["模型目录同步", health.model_catalog.catalog_revision ? new Date(health.model_catalog.accepted_at).toLocaleString() : "尚未同步"], ["模型目录错误", health.model_catalog.last_error || "无"]]) $("health-details").append(element("dt", label), element("dd", String(value)));
     const excludedCount = catalogSync && catalogSync.revision === health.model_catalog?.catalog_revision ? catalogSync.excludedCount : 0;
     $("catalog-excluded").hidden = !excludedCount;
     $("catalog-excluded").textContent = excludedCount ? `本次目录同步排除 ${excludedCount} 个缺少元数据且未注册模型的 Host 条目；它们不参与模型归属判断。` : "";
@@ -176,7 +178,6 @@
     $("edit-label").required = kind === "group"; $("edit-label-title").textContent = kind === "key" ? "备注" : "名称";
     $("edit-key-value").hidden = kind !== "key"; $("edit-key-value").textContent = kind === "key" ? keys.find(k => k.id === value.id)?.display || "CPA 中已不存在的 Key" : "";
     $("edit-label").value = value.label || value.name || ""; $("key-fields").hidden = kind !== "key"; $("edit-enabled").checked = value.enabled !== false; $("edit-limit").value = value.max_concurrency || 0;
-    $("edit-claude-ttl").value = value.claude_cache_ttl || "";
     $("bindings").replaceChildren(); for (const g of snapshot.groups) { const label = element("label", undefined, "check"), checkbox = element("input"); checkbox.type = "checkbox"; checkbox.value = g.id; checkbox.checked = (value.group_ids || []).includes(g.id); label.append(checkbox, document.createTextNode(g.name)); $("bindings").append(label); }
     $("delete-entry").hidden = kind === "group" ? !snapshot.groups.some(g => g.id === value.id) : !snapshot.keys.some(k => k.id === value.id);
     $("editor-error").textContent = ""; renderChoices(); icons(); $("editor").showModal();
@@ -189,8 +190,6 @@
       const limit = Number($("edit-limit").value);
       if (!$("edit-limit").value || !Number.isSafeInteger(limit) || limit < 0) { $("editor-error").textContent = "并发上限必须为非负整数，尚未保存"; return; }
       value.label = $("edit-label").value.trim(); value.enabled = $("edit-enabled").checked; value.max_concurrency = limit; value.group_ids = [...$("bindings").querySelectorAll("input:checked")].map(c => c.value);
-      const ttl = $("edit-claude-ttl").value;
-      if (ttl) value.claude_cache_ttl = ttl; else delete value.claude_cache_ttl;
       next.keys = replaceByID(next.keys, value);
     } else {
       value.name = $("edit-label").value.trim();

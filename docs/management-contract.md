@@ -10,27 +10,28 @@ management surface.
 
 ## Endpoints
 
-Plugin 0.1.10 also exposes optional Key `claude_cache_ttl` and authenticated
-`GET /claude-ttl/requirements`, `POST /claude-ttl/executions` under the v1 prefix.
-The metadata has no token counts and uses `ttl_source=enforced_request`, not actual
-upstream evidence. Setup, strict configuration prerequisites, retention, unknown
-semantics and the explicit Helper handoff are defined in
-[claude-uniform-ttl.md](claude-uniform-ttl.md). Check the capability module instead
-of assuming the published 0.1.9 binary contains this feature.
+Plugin 0.1.12 removes the TTL feature formerly shipped in 0.1.10/0.1.11.
+`claude_cache_ttl` is absent from capabilities,
+health, policy output, UI and configuration metadata. Both former TTL routes
+(`GET /claude-ttl/requirements`, `POST /claude-ttl/executions`) return 404, and no
+usage hook or execution metadata IO remains. Old plugin YAML loads with a removal
+warning; independently installed CPA payload rules need separate administrator
+cleanup. Helper clients must stop TTL editing and metadata requests when its
+capability is absent. See [the removal and handoff](claude-ttl-removal.md).
 
 Model-list filtering is controlled through CPA's official plugin configuration:
 `PATCH /v8/management/config/plugins/configs/cpa-helper-plugin` with
 `{"model_list_filter_enabled":false}` disables it; true enables it (the default
 when omitted). This host-managed setting persists across restarts and does not
 modify the policy snapshot or disable generation enforcement. `/capabilities`
-reports its current value, contract provenance CPA v8.0.45, plugin version 0.1.11, C ABI 1 and RPC schema 7.
+reports its current value, contract provenance CPA v8.0.45, plugin version 0.1.12, C ABI 1 and RPC schema 7.
 The schema is the plugin-declared RPC contract, not the host's maximum schema.
 It comes from the adapter's independent `RPCSchemaVersion`; updating the SDK must
 not change registration, minimum Host requirements or this reported value by itself.
 `cpa_version` identifies the pinned contract target; newer-host verification and
 the v8.0.47 registration fix are recorded in [compatibility.md](compatibility.md).
 `GET /v8/management/plugins` exposes each configuration field's `default`,
-including the state directory, enabled model-list filtering, and optional Claude TTL.
+including the state directory and enabled model-list filtering.
 
 Plugin 0.1.10 removes response model verification. It no longer advertises
 `response_model_mismatch` in configuration metadata or capabilities, its module is
@@ -46,7 +47,7 @@ not open an additional listener or accept downstream API keys for administration
 
 | Method | Resource | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | plugin status, active revision, policy age, contract version, concurrency, model catalog and Claude TTL health |
+| `GET` | `/health` | plugin status, active revision, policy age, contract version, concurrency and model catalog |
 | `GET` | `/policy` | complete policy with hashed identifiers; ETag is the revision |
 | `PUT` | `/policy` | validate and atomically activate a complete snapshot |
 | `POST` | `/policy/rollback` | activate a retained revision |
@@ -73,7 +74,7 @@ failure is an explicit 502, not an empty successful directory.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.11",
+  "plugin_version": "0.1.12",
   "policy_revision": 2,
   "generated_at": "2026-09-18T00:00:00Z",
   "groups": [],
@@ -82,8 +83,15 @@ failure is an explicit 502, not an empty successful directory.
 ```
 
 The authoritative shape is `policy.schema.json`; unknown JSON fields are rejected.
-Plugin `0.1.11` accepts snapshots produced by `0.1.0` through `0.1.10`;
-all twelve supported producer versions are enumerated in the schema. The policy contract remains
+The removed Key `claude_cache_ttl` is accepted only as legacy compatibility data:
+valid old state and exact historical receipt replay remain readable without a
+startup rewrite. It is stripped from compiled decisions and GET /policy; new
+nonempty TTL transactions are rejected explicitly, including through an older
+producer version. Rollback restores the other retained rules while discarding TTL.
+Old metadata files are neither read nor removed. This exception does not relax
+unknown, duplicate, null or invalid field validation.
+Plugin `0.1.12` accepts snapshots produced by `0.1.0` through `0.1.11`;
+all thirteen supported producer versions are enumerated in the schema. The policy contract remains
 `v1`, and existing policy state does not require migration. Binary rollback must restore
 the matching pre-upgrade state backup; do not rewrite producer metadata to bypass compatibility.
 The complete `PUT /policy` operation is the external administration interface for
@@ -200,7 +208,7 @@ directory; `health.status` is `unavailable` and the initial ETag is `"0"`.
 ```json
 {
   "contract_version": "v1",
-  "plugin_version": "0.1.11",
+  "plugin_version": "0.1.12",
   "cpa_version": "v8.0.45",
   "catalog_revision": 1,
   "generated_at": "2026-10-28T00:00:00Z",
@@ -222,13 +230,19 @@ the active catalog until restart reconciles disk state.
 `/health.model_catalog` reports availability, revision, generated/accepted times,
 age, credential count, last rejection, snapshot `plugin_version`, snapshot
 `cpa_version` and `refresh_required`. Valid format-1 v1 catalogs from producer
-0.1.10/CPA v8.0.45, 0.1.9/CPA v8.0.45 and 0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
+0.1.11/CPA v8.0.45, 0.1.10/CPA v8.0.45, 0.1.9/CPA v8.0.45 and 0.1.8/CPA v8.0.32 remain readable with their revision, timestamps and receipts
 unchanged and `refresh_required: true`. Startup does not rewrite them. New writes
-require the current 0.1.11/v8.0.45 envelope and the next revision; exact historical
+require the current 0.1.12/v8.0.45 envelope and the next revision; exact historical
 idempotency retries still return their original receipt. Unknown versions or
 corrupt state remain errors. This is independent of policy health:
 model-only policies and unrestricted callers do not need credential associations.
 There is no automatic expiry; management outages retain the last accepted catalog.
+The UI hides contract, catalog status and catalog revision rows. Its model-catalog
+source row displays the currently connected CPA version from the official
+`X-CPA-VERSION` management response header and the saved catalog's plugin producer.
+A missing version header displays "版本未报告"; an unusable saved catalog without
+producer information displays "来源不可用" alongside its error. Neither falls back to the pinned
+`cpa_version`. The latter remains data-contract provenance for catalog validation.
 The panel synchronizes on opening and on its sync button. It rechecks CPA config
 and credential routing identities/model sets before publishing; observation timestamps and
 transient cooldowns are ignored. The host offers no atomic registry revision, so

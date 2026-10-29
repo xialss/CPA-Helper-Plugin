@@ -26,7 +26,7 @@ type managementRequest struct {
 
 func managementRegistration() any {
 	routes := []pluginapi.ManagementRoute{}
-	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"GET", "/credential-models"}, {"GET", "/model-catalog"}, {"PUT", "/model-catalog"}, {"GET", "/claude-ttl/requirements"}, {"POST", "/claude-ttl/executions"}} {
+	for _, r := range [][2]string{{"GET", "/health"}, {"GET", "/capabilities"}, {"GET", "/policy"}, {"PUT", "/policy"}, {"POST", "/policy/rollback"}, {"GET", "/directory"}, {"GET", "/credential-models"}, {"GET", "/model-catalog"}, {"PUT", "/model-catalog"}} {
 		routes = append(routes, pluginapi.ManagementRoute{Method: r[0], Path: BasePath + r[1]})
 	}
 	resources := []pluginapi.ResourceRoute{{Path: "/ui", Menu: "CPA Helper", Description: "API key routing and concurrency"}, {Path: "/app.js"}, {Path: "/style.css"}, {Path: "/logo.svg"}, {Path: "/lucide.js"}, {Path: "/sha256.js"}, {Path: "/directory.js"}}
@@ -105,15 +105,7 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		return
 	}
 	if r.Method == "GET" && path == "/capabilities" {
-		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": pluginabi.ABIVersion, "schema_version": RPCSchemaVersion, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "claude_cache_ttl": a.ttl.health(), "modules": []string{"model_rules", "model_list_filter", "credential_routes", "concurrency", "claude_cache_ttl"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].claude_cache_ttl", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
-		return
-	}
-	if r.Method == "GET" && path == "/claude-ttl/requirements" {
-		jsonResponse(w, 200, map[string]any{"payload": requiredTTLPayload(), "reserved_headers": []string{ttlHeader, ttlRequestHeader}, "configuration_validation": "pinned_file_requires_reload", "metadata_version": "v1"})
-		return
-	}
-	if r.Method == "POST" && path == "/claude-ttl/executions" {
-		a.serveTTLMetadata(w, r)
+		jsonResponse(w, 200, map[string]any{"plugin_id": ID, "plugin_version": policy.Version, "contract_version": "v1", "abi_version": pluginabi.ABIVersion, "schema_version": RPCSchemaVersion, "cpa_version": CPAVersion, "model_list_filter_enabled": a.modelListFiltering(), "modules": []string{"model_rules", "model_list_filter", "credential_routes", "concurrency"}, "policy_fields": []string{"groups[].id", "groups[].name", "groups[].note", "groups[].rule", "keys[].id", "keys[].label", "keys[].enabled", "keys[].group_ids", "keys[].max_concurrency", "keys[].rule"}, "unknown_key": "allow", "concurrency_scope": "instance", "billing": false})
 		return
 	}
 	s := a.currentStore()
@@ -130,10 +122,9 @@ func (a *App) serveManagement(w http.ResponseWriter, r *http.Request, callback s
 		}
 		jsonResponse(w, status, struct {
 			snapshot.Health
-			Active         map[string]int         `json:"active"`
-			ModelCatalog   snapshot.CatalogHealth `json:"model_catalog"`
-			ClaudeCacheTTL map[string]any         `json:"claude_cache_ttl"`
-		}{h, a.runtime.Counts(), a.currentCatalogStore().Health(), a.ttl.health()})
+			Active       map[string]int         `json:"active"`
+			ModelCatalog snapshot.CatalogHealth `json:"model_catalog"`
+		}{h, a.runtime.Counts(), a.currentCatalogStore().Health()})
 	case "GET /model-catalog", "PUT /model-catalog":
 		a.serveModelCatalog(w, r)
 	case "GET /policy":

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -106,6 +107,17 @@ func Open(dir string) *Store {
 		}
 	}
 	s.engine = engine
+	for _, p := range []*policy.Snapshot{&s.state.Current, s.state.Previous} {
+		if p == nil {
+			continue
+		}
+		for _, k := range p.Keys {
+			if k.LegacyClaudeCacheTTL != "" {
+				slog.Warn("claude_cache_ttl has been removed; stored policy TTL is ignored and retained only for history and receipts")
+				return s
+			}
+		}
+	}
 	return s
 }
 
@@ -140,7 +152,11 @@ func (s *Store) Current() (policy.Snapshot, error) {
 	if s.engine == nil {
 		return policy.Snapshot{}, errors.New("policy unavailable")
 	}
-	return clone(s.state.Current), nil
+	p := clone(s.state.Current)
+	for i := range p.Keys {
+		p.Keys[i].LegacyClaudeCacheTTL = ""
+	}
+	return p, nil
 }
 
 func clone(p policy.Snapshot) policy.Snapshot {
@@ -217,6 +233,9 @@ func (s *Store) Rollback(base, revision uint64, key string) (uint64, error) {
 		return 0, errors.New(s.lastError)
 	}
 	p := clone(*s.state.Previous)
+	for i := range p.Keys {
+		p.Keys[i].LegacyClaudeCacheTTL = ""
+	}
 	p.Revision = base + 1
 	p.GeneratedAt = time.Now().UTC()
 	return s.apply(p, base, key, d)
@@ -239,6 +258,11 @@ func (s *Store) apply(p policy.Snapshot, base uint64, key, d string) (uint64, er
 	}
 	if base != s.state.Current.Revision || p.Revision != base+1 {
 		return fail(ErrConflict)
+	}
+	for _, k := range p.Keys {
+		if k.LegacyClaudeCacheTTL != "" {
+			return fail(errors.New("claude_cache_ttl has been removed; omit it from new policy writes"))
+		}
 	}
 	p = clone(p)
 	engine, err := policy.Compile(p)

@@ -1,5 +1,7 @@
 # CPA-Helper 交接：单请求 Claude TTL
 
+**2026-10-29 交接变更：用户已要求移除全部 TTL 功能，当前工作树已移除，尚未发布。下文 TTL 实施交接已废弃，接收方无需继续实现。若已接入，按能力缺失停用 TTL 编辑、元数据查询与新请求关联；历史计费数据保留。移除接口、CPA payload 清理、回滚和详细交接见 [TTL 移除记录](claude-ttl-removal.md)。本轮未修改 Helper 工作区。**
+
 更新：2026-10-28。接收工作区：`D:/Project/CPA-Helper`。本文是后续实施输入，不代表 Helper 已完成修改。
 
 2026-10-29 发布追加：v0.1.11 修复宿主 schema 协商，插件协议仍为 7、数据契约来源 `cpa_version` 仍为 v8.0.45；它不是实际 Host 版本门禁。接收方如校验 Plugin producer，应加入 0.1.11 的已知管理/目录组合，并保留以下能力探测、revision 和 TTL 来源语义。Host 新增兼容 schema 不需要 Helper 改写策略版本或目录 CPA 字段。发布与正式产物结果见 [v0.1.11 记录](v0.1.11-release.md)，本轮没有修改 Helper。

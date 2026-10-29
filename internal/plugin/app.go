@@ -53,12 +53,11 @@ type App struct {
 	host                   HostCall
 	inventoryMu            sync.Mutex
 	credentials            map[string]credential
-	ttl                    *claudeTTL
 }
 
 // New constructs a plugin before CPA registration supplies configuration.
 func New(host HostCall) *App {
-	return &App{modelListFilterEnabled: true, runtime: run.New(), host: host, credentials: map[string]credential{}, ttl: newClaudeTTL()}
+	return &App{modelListFilterEnabled: true, runtime: run.New(), host: host, credentials: map[string]credential{}}
 }
 
 type lifecycle struct {
@@ -66,14 +65,14 @@ type lifecycle struct {
 	SchemaVersion uint32 `json:"schema_version"`
 }
 type config struct {
-	ModelListFilterEnabled bool            `yaml:"model_list_filter_enabled"`
-	ClaudeCacheTTL         claudeTTLConfig `yaml:"claude_cache_ttl"`
-	StateDir               string          `yaml:"state_dir"`
-	Enabled                bool            `yaml:"enabled"`
-	Priority               int             `yaml:"priority"`
-	Store                  yaml.Node       `yaml:"store"`
+	ModelListFilterEnabled bool      `yaml:"model_list_filter_enabled"`
+	StateDir               string    `yaml:"state_dir"`
+	Enabled                bool      `yaml:"enabled"`
+	Priority               int       `yaml:"priority"`
+	Store                  yaml.Node `yaml:"store"`
 	// Decode the removed setting only so an upgrade can load existing CPA YAML.
 	RemovedResponseModelMismatch yaml.Node `yaml:"response_model_mismatch,omitempty"`
+	RemovedClaudeCacheTTL        yaml.Node `yaml:"claude_cache_ttl,omitempty"`
 }
 type registration struct {
 	SchemaVersion uint32             `json:"schema_version"`
@@ -105,10 +104,6 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		if strings.TrimSpace(cfg.StateDir) == "" {
 			return nil, errors.New("state_dir must not be empty")
 		}
-		ttlGuard, err := validateTTLConfig(cfg.ClaudeCacheTTL)
-		if err != nil {
-			return nil, err
-		}
 		dir, err := filepath.Abs(cfg.StateDir)
 		if err != nil {
 			return nil, err
@@ -123,20 +118,14 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 			a.catalog = snapshot.OpenCatalog(dir)
 			a.stateDir = dir
 		}
-		ttlStore := snapshot.ReadTTLMetadata(dir)
-		if ttlGuard != nil {
-			ttlStore, err = snapshot.OpenTTLMetadata(dir)
-			if err != nil {
-				a.mu.Unlock()
-				return nil, err
-			}
-		}
-		a.ttl.configure(ttlGuard, ttlStore)
 		a.modelListFilterEnabled = cfg.ModelListFilterEnabled
 		a.runtime.Resume()
 		a.mu.Unlock()
 		if cfg.RemovedResponseModelMismatch.Kind != 0 {
 			slog.Warn("response_model_mismatch has been removed; legacy configuration is ignored")
+		}
+		if cfg.RemovedClaudeCacheTTL.Kind != 0 {
+			slog.Warn("claude_cache_ttl has been removed; legacy plugin configuration is ignored; remove its dedicated CPA payload rules separately")
 		}
 		return ok(registration{
 			SchemaVersion: RPCSchemaVersion,
@@ -146,10 +135,9 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 				ConfigFields: []pluginapi.ConfigField{
 					{Name: "state_dir", Type: pluginapi.ConfigFieldTypeString, Default: filepath.Join("plugins", "cpa-helper-state"), Description: "Dedicated persistent policy directory; parent must exist."},
 					{Name: "model_list_filter_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Default: true, Description: "模型列表过滤：默认启用。关闭后返回 CPA 原始目录，不影响生成权限与路由规则。"},
-					{Name: "claude_cache_ttl", Type: pluginapi.ConfigFieldTypeObject, Default: claudeTTLConfig{}, Description: "单请求 Claude TTL；启用前配置严格校验的 payload 规则、绝对 host_config_path 及与 CPA 一致的 delegate_builtin。"},
 				},
 			},
-			Capabilities: map[string]bool{"request_interceptor": true, "request_interceptor_omit_body_before": true, "request_interceptor_omit_body_after": true, "response_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true, "usage_plugin": true},
+			Capabilities: map[string]bool{"request_interceptor": true, "request_interceptor_omit_body_before": true, "request_interceptor_omit_body_after": true, "response_interceptor": true, "request_lifecycle_plugin": true, "scheduler": true, "management_api": true},
 		})
 	case pluginabi.MethodResponseInterceptAfter:
 		var req pluginapi.ResponseInterceptRequest
@@ -167,31 +155,13 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 		}
 		return a.intercept(req)
 	case pluginabi.MethodRequestInterceptAfter:
-		var req pluginapi.RequestInterceptRequest
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, errors.New("invalid after-interception payload")
-		}
-		response, err := a.ttl.after(req)
-		if err != nil {
-			return denied(503, "claude_ttl_unavailable", err.Error(), req.SourceFormat)
-		}
-		return ok(response)
-	case pluginabi.MethodUsageHandle:
-		var req pluginapi.UsageRecord
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, errors.New("invalid usage observation payload")
-		}
-		if err := a.ttl.observe(req); err != nil {
-			return nil, err
-		}
-		return ok(struct{}{})
+		return ok(pluginapi.RequestInterceptResponse{})
 	case pluginabi.MethodRequestComplete:
 		var req pluginapi.RequestCompletion
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, errors.New("invalid completion payload")
 		}
 		a.runtime.Complete(req.RequestID)
-		a.ttl.complete(req.RequestID)
 		return ok(struct{}{})
 	case pluginabi.MethodSchedulerPick:
 		var req pluginapi.SchedulerPickRequest
@@ -219,7 +189,7 @@ func (a *App) Handle(method string, raw []byte) ([]byte, error) {
 }
 
 // Shutdown clears transient state after the host detaches the instance.
-func (a *App) Shutdown() { a.runtime.Shutdown(); a.ttl.shutdown() }
+func (a *App) Shutdown() { a.runtime.Shutdown() }
 func (a *App) modelListFiltering() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -280,11 +250,7 @@ func (a *App) intercept(req pluginapi.RequestInterceptRequest) ([]byte, error) {
 			return denied(429, "concurrency_limit", "当前 API Key 已达设定并发上限", req.SourceFormat)
 		}
 	}
-	response, err := a.ttl.begin(req, k, rev)
-	if err != nil {
-		return denied(503, "claude_ttl_unavailable", err.Error(), req.SourceFormat)
-	}
-	return ok(response)
+	return ok(pluginapi.RequestInterceptResponse{})
 }
 
 func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
@@ -327,12 +293,8 @@ func (a *App) pick(req pluginapi.SchedulerPickRequest) ([]byte, error) {
 			allowed = append(allowed, run.Candidate{ID: c.ID, Weight: weight})
 		}
 	}
-	delegate, err := a.ttl.selection(req)
-	if err != nil {
-		return ErrorEnvelope("claude_ttl_unavailable", err.Error(), 503)
-	}
 	if len(allowed) == len(req.Candidates) && len(allowed) > 0 {
-		return ok(pluginapi.SchedulerPickResponse{DelegateBuiltin: delegate, Handled: delegate != ""})
+		return ok(pluginapi.SchedulerPickResponse{})
 	}
 	id := a.runtime.Pick(rev, scope, strings.ToLower(model), allowed)
 	if id == "" {

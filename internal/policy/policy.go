@@ -12,11 +12,11 @@ import (
 
 // Version identifies this plugin's policy producer. Release builds override it
 // with the Git tag through Go's string-variable linker flag.
-var Version = "0.1.11"
+var Version = "0.1.12"
 
 func compatiblePluginVersion(version string) bool {
 	// Older producers remain readable; optional fields are advertised by capability.
-	return version == Version || version == "0.1.10" || version == "0.1.9" || version == "0.1.8" || version == "0.1.7" || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
+	return version == Version || version == "0.1.11" || version == "0.1.10" || version == "0.1.9" || version == "0.1.8" || version == "0.1.7" || version == "0.1.6" || version == "0.1.5" || version == "0.1.4" || version == "0.1.3" || version == "0.1.2" || version == "0.1.1" || version == "0.1.0"
 }
 
 // Selector identifies a credential category without exposing credentials.
@@ -50,8 +50,10 @@ type Key struct {
 	Enabled        bool     `json:"enabled"`
 	GroupIDs       []string `json:"group_ids"`
 	MaxConcurrency int      `json:"max_concurrency"`
-	ClaudeCacheTTL string   `json:"claude_cache_ttl,omitempty"`
-	Rule           Rule     `json:"rule"`
+	// LegacyClaudeCacheTTL is inert history data for pre-removal state and receipts.
+	// It is excluded from compiled keys and rejected in new policy transactions.
+	LegacyClaudeCacheTTL string `json:"claude_cache_ttl,omitempty"`
+	Rule                 Rule   `json:"rule"`
 }
 
 // Snapshot is the complete, versioned policy transaction.
@@ -116,9 +118,10 @@ func Compile(s Snapshot) (*Engine, error) {
 	}
 	e := &Engine{keys: make(map[string]Key, len(s.Keys)), modelSources: make(map[string][]modelRuleSource, len(s.Keys))}
 	for _, k := range s.Keys {
-		if k.ClaudeCacheTTL != "" && k.ClaudeCacheTTL != "5m" && k.ClaudeCacheTTL != "1h" {
-			return nil, fmt.Errorf("claude_cache_ttl must be 5m or 1h when configured")
+		if k.LegacyClaudeCacheTTL != "" && k.LegacyClaudeCacheTTL != "5m" && k.LegacyClaudeCacheTTL != "1h" {
+			return nil, fmt.Errorf("invalid legacy claude_cache_ttl")
 		}
+		k.LegacyClaudeCacheTTL = ""
 		if !ValidScope(k.ID) || k.MaxConcurrency < 0 || uint64(k.MaxConcurrency) > 9007199254740991 || k.GroupIDs == nil {
 			return nil, fmt.Errorf("invalid key configuration")
 		}

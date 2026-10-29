@@ -1,5 +1,10 @@
 # Claude TTL feasibility verification
 
+2026-10-29: the user requested removal of TTL. Its implementation, diagnostic
+probe and dedicated tests have been deleted from the working tree. This document
+is historical evidence; use [the removal record](claude-ttl-removal.md) for the
+current behavior and external configuration cleanup.
+
 This document preserves the feasibility-stage evidence. Subsequent implementation
 is tracked separately in [the uniform TTL plan](claude-uniform-ttl-plan.md) and
 [the deployment/metadata contract](claude-uniform-ttl.md); statements below about

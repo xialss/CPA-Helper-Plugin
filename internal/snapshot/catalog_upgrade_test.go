@@ -40,7 +40,7 @@ func legacyCatalogForVersion(t *testing.T, pluginVersion, cpaVersion string) (st
 }
 
 func TestLegacyCatalogReadAndExplicitUpgrade(t *testing.T) {
-	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}, {"0.1.10", "v8.0.45"}} {
+	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}, {"0.1.10", "v8.0.45"}, {"0.1.11", "v8.0.45"}} {
 		t.Run(producer[0], func(t *testing.T) {
 			dir, old, before := legacyCatalogForVersion(t, producer[0], producer[1])
 			s := OpenCatalog(dir)

@@ -134,6 +134,10 @@ plugins:
       response_model_mismatch:
         enabled: true
         unknown_action: reject
+      claude_cache_ttl:
+        enabled: true
+        host_config_path: missing-old-config.yaml
+        delegate_builtin: obsolete
       store:
         id: cpa-helper-plugin
 openai-compatibility:
@@ -289,7 +293,7 @@ openai-compatibility:
 		return hostPlugin{}
 	}
 	info := getPlugin()
-	if !info.Registered || !info.EffectiveEnabled || len(info.ConfigFields) != 3 {
+	if !info.Registered || !info.EffectiveEnabled || len(info.ConfigFields) != 2 {
 		t.Fatalf("host plugin registration: %+v", info)
 	}
 	status, body = call("GET", plugin.BasePath+"/capabilities", "fixture-management", nil, nil)
@@ -306,18 +310,27 @@ openai-compatibility:
 	if defaults.ABI != 1 || defaults.Schema != 7 || defaults.CPA != "v8.0.45" || defaults.Plugin != policy.Version {
 		t.Fatalf("target capabilities do not match the pinned contract: %s", body)
 	}
-	if bytes.Contains(body, []byte("response_model_mismatch")) {
-		t.Fatalf("removed response verification is advertised: %s", body)
+	if bytes.Contains(body, []byte("response_model_mismatch")) || bytes.Contains(body, []byte("claude_cache_ttl")) {
+		t.Fatalf("removed feature is advertised: %s", body)
 	}
 	status, body = call("POST", plugin.BasePath+"/response-model/validate", "fixture-management", map[string]any{"enabled": true}, nil)
 	if status != 404 {
 		t.Fatalf("removed verification route: %d %s", status, body)
 	}
+	for _, route := range [][2]string{{"GET", "/claude-ttl/requirements"}, {"POST", "/claude-ttl/executions"}} {
+		status, body = call(route[0], plugin.BasePath+route[1], "fixture-management", map[string]any{}, nil)
+		if status != 404 {
+			t.Fatalf("removed TTL route: %s: %d %s", route[1], status, body)
+		}
+	}
+	status, body = call("GET", plugin.BasePath+"/health", "fixture-management", nil, nil)
+	if status != 200 || bytes.Contains(body, []byte("claude_cache_ttl")) {
+		t.Fatalf("removed TTL health: %d %s", status, body)
+	}
 	// The host's serialized defaults must agree with the plugin's omitted settings.
 	wantDefaults, err := json.Marshal(map[string]any{
 		"state_dir":                 map[string]any{"type": "string", "default": filepath.Join("plugins", "cpa-helper-state")},
 		"model_list_filter_enabled": map[string]any{"type": "boolean", "default": defaults.Filter},
-		"claude_cache_ttl":          map[string]any{"type": "object", "default": map[string]any{"enabled": false, "host_config_path": "", "delegate_builtin": ""}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -850,7 +863,7 @@ openai-compatibility:
 	stop()
 	// Reload verified older catalogs without rewriting their
 	// provenance, then explicitly publish and reload the next current revision.
-	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}, {"0.1.10", "v8.0.45"}} {
+	for _, producer := range [][2]string{{"0.1.8", "v8.0.32"}, {"0.1.9", "v8.0.45"}, {"0.1.10", "v8.0.45"}, {"0.1.11", "v8.0.45"}} {
 		legacy := modelcatalog.Clone(modelSnapshot)
 		legacy.PluginVersion, legacy.CPAVersion, legacy.Revision = producer[0], producer[1], 7
 		legacy.GeneratedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
@@ -903,6 +916,66 @@ openai-compatibility:
 			t.Fatalf("restart lost legacy receipt: %d %s", status, body)
 		}
 		stop()
+	}
+	// Load actual pre-removal TTL policies without rewriting state or losing
+	// permissions/receipts; the removed metadata path is deliberately unreadable
+	// as a directory and must never be opened by the plugin.
+	metadataPath := filepath.Join(dir, "state", "ttl-metadata")
+	if err = os.WriteFile(metadataPath, []byte("inert historical metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"0.1.10", "0.1.11"} {
+		raw, err := json.Marshal(persistedPolicy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var legacy policy.Snapshot
+		if err = json.Unmarshal(raw, &legacy); err != nil || len(legacy.Keys) == 0 {
+			t.Fatal("missing policy fixture", err)
+		}
+		legacy.PluginVersion, legacy.Keys[0].LegacyClaudeCacheTTL = version, "1h"
+		legacyJSON, err := json.Marshal(legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		baseRevision := legacy.Revision - 1
+		sum := sha256.Sum256(append([]byte(fmt.Sprintf("put:%d:", baseRevision)), legacyJSON...))
+		before, err := json.Marshal(map[string]any{"format": 1, "current": legacy, "accepted_at": time.Now().UTC(), "receipts": map[string]any{"legacy-ttl": map[string]any{"digest": hex.EncodeToString(sum[:]), "revision": legacy.Revision}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		statePath := filepath.Join(dir, "state", "state.json")
+		if err = os.WriteFile(statePath, before, 0600); err != nil {
+			t.Fatal(err)
+		}
+		start()
+		status, body = call("GET", plugin.BasePath+"/policy", "fixture-management", nil, nil)
+		var current policy.Snapshot
+		want := persistedPolicy
+		want.PluginVersion = version
+		if status != 200 || json.Unmarshal(body, &current) != nil || bytes.Contains(body, []byte("claude_cache_ttl")) || !reflect.DeepEqual(current, want) {
+			t.Fatalf("legacy TTL changed remaining policy: %d %s", status, body)
+		}
+		status, body = call("PUT", plugin.BasePath+"/policy", "fixture-management", legacy, map[string]string{"If-Match": fmt.Sprint(baseRevision), "Idempotency-Key": "legacy-ttl"})
+		if status != 200 || !bytes.Contains(body, []byte(fmt.Sprintf(`"policy_revision":%d`, legacy.Revision))) {
+			t.Fatalf("legacy TTL receipt lost: %d %s", status, body)
+		}
+		legacy.Revision++
+		status, body = call("PUT", plugin.BasePath+"/policy", "fixture-management", legacy, map[string]string{"If-Match": fmt.Sprint(legacy.Revision - 1), "Idempotency-Key": "removed-ttl"})
+		if status != 400 || !bytes.Contains(body, []byte("has been removed")) {
+			t.Fatalf("new TTL write was not explicitly rejected: %d %s", status, body)
+		}
+		status, body = call("GET", "/v1/models", "fixture-downstream", nil, nil)
+		if status != 200 || !bytes.Contains(body, []byte(`"id":"route-model"`)) || bytes.Contains(body, []byte(`"id":"blocked-model"`)) {
+			t.Fatalf("legacy TTL changed model filtering: %d %s", status, body)
+		}
+		stop()
+		if after, err := os.ReadFile(statePath); err != nil || !bytes.Equal(before, after) {
+			t.Fatal("legacy TTL startup/replay/rejection rewrote state", err)
+		}
+		if metadata, err := os.ReadFile(metadataPath); err != nil || string(metadata) != "inert historical metadata" {
+			t.Fatal("old TTL metadata was touched", err)
+		}
 	}
 	stored, err := os.ReadFile(filepath.Join(dir, "state", "state.json"))
 	if err != nil {

@@ -1,5 +1,7 @@
 # Claude 单请求 TTL 控制 PRD
 
+2026-10-29：用户已取消 TTL 功能，当前工作树已移除。本 PRD 保留历史需求；后续以 [TTL 移除记录](claude-ttl-removal.md)为准。
+
 更新：2026-10-28；状态：Plugin 实施、v0.1.10 发布及正式产物验证完成。目标：CPA v8.0.45 / C ABI 1 / RPC schema 7。证据见 [v0.1.10 记录](v0.1.10-release.md)。
 证据见[验收记录](claude-uniform-ttl-verification.md)。Helper 消费端属于独立工作区对接，未在本轮修改。
 

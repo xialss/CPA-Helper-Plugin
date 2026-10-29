@@ -3,6 +3,53 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
+## Release 0.1.12
+
+Plugin 0.1.12 retains C ABI 1, the independently implemented RPC schema 7 and
+Host-max negotiation without an upper-bound whitelist. The SDK and `cpa_version`
+provenance remain v8.0.45. Policies from 0.1.0 through 0.1.11 and saved catalogs
+from 0.1.11/0.1.10/0.1.9 with v8.0.45 or 0.1.8 with v8.0.32 remain readable;
+new catalog publications require 0.1.12/v8.0.45. No startup state rewrite is added.
+Release progress and final artifact evidence: [v0.1.12](v0.1.12-release.md).
+
+### Running-version display
+
+The management UI reads `X-CPA-VERSION` from successful existing management
+responses to display the running CPA version in its model-catalog source row.
+The official v8.0.45 and v8.0.47 management middleware sets this header from
+`buildinfo.Version` (`internal/api/handlers/management/handler.go:325`). If no
+response reports it, the UI explicitly shows "版本未报告". The catalog envelope's
+`cpa_version` remains pinned data-contract provenance, independent of this display;
+it must not be replaced with a running-version value. Contract, catalog status and
+catalog revision remain in the API but are hidden in the runtime-status UI.
+
+Validated on 2026-10-29 with a rebuilt embedded-resource DLL and the official
+v8.0.45 and v8.0.47 Windows binaries in headless Edge. Both fixtures verify the
+running-version display, unchanged `v8.0.45` catalog envelope, removed rows,
+explicit missing-header display and restoration after the header returns.
+JavaScript syntax and diff checks also pass. These initial UI results precede the
+version bump; final-version and published-artifact checks are tracked in the
+release record. A catalog with a saved revision but no usable producer explicitly
+shows "来源不可用" and retains its error details.
+
+### Remove Claude TTL
+
+The user requested removal of all plugin TTL functionality on 2026-10-29.
+This change is not part of the published v0.1.11 assets. It retains C ABI 1,
+the independent RPC schema 7 and Host-max negotiation (minimum 7, no upper bound).
+It removes the usage capability/callback, TTL request/selection state, header
+mutation, configuration-file checks, execution metadata storage and management/UI
+surfaces. The after-request callback becomes a no-op while both phases still omit
+request bodies. Model-list filtering and policy/scheduler/lifecycle contracts stay.
+
+Old plugin YAML is accepted with a removal warning and ignored. Valid old policy
+TTL fields are retained only for stored-history/receipt compatibility, excluded
+from compiled decisions and current-policy output; new nonempty TTL policy writes
+fail explicitly. Startup never rewrites old state. Old TTL metadata is not read,
+written or deleted. Independently installed CPA payload rules must be removed
+from CPA configuration by its administrator; the plugin does not edit CPA files.
+Scope, rollback and verification: [TTL removal](claude-ttl-removal.md).
+
 ## Published release 0.1.11
 
 Plugin 0.1.11 ships schema negotiation using C ABI 1 and the independently
@@ -456,6 +503,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
+| 0.1.12 | v8.0.45 and v8.0.47; pinned SDK v8.0.45 | C ABI 1 / host schema at least 7, plugin schema 7 | pre-release: final-version Windows DLL and Edge passed on both Hosts; artifact publication pending | Removes TTL; retains 0.1.11 state/receipt compatibility; displays the running CPA version |
 | 0.1.11 | v8.0.45 and v8.0.47 (`90c447d3a8727d115aa7552ec93ce023736ed492`); pinned SDK v8.0.45 | C ABI 1 / host schema at least 7, plugin schema 7 | published; both platform builds/artifacts checked; official DLL CPA/TTL passed on both Hosts and Edge on v8.0.47; Linux loading untested | Accepts compatible newer-host schema maxima while retaining body omission and the pinned plugin contract |
 | 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
 | 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
