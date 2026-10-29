@@ -3,7 +3,7 @@
 This file is the source of truth for CPA versions supported by this repository. It
 must be updated before any ABI-facing change.
 
-## Release candidate 0.1.11
+## Published release 0.1.11
 
 Plugin 0.1.11 ships schema negotiation using C ABI 1 and the independently
 implemented plugin RPC schema 7. Official CPA v8.0.45 and v8.0.47 are the tested
@@ -12,8 +12,10 @@ The SDK and `cpa_version` provenance stay v8.0.45. Policies from 0.1.0 through
 0.1.10 and saved catalogs from 0.1.10/v8.0.45, 0.1.9/v8.0.45 and 0.1.8/v8.0.32
 remain readable without a startup rewrite. New catalog publications use
 0.1.11/v8.0.45. Back up state before upgrade; binary rollback restores matching
-binaries and pre-upgrade state. Publication and official artifact validation
-are tracked in [the v0.1.11 release record](v0.1.11-release.md).
+binaries and pre-upgrade state. Both platform builds and official artifact checks
+passed; the downloaded Windows DLL passed CPA/TTL fixtures on both official Hosts
+and Edge smoke on v8.0.47. Linux dynamic loading is untested. Publication and
+artifact evidence are tracked in [the v0.1.11 release record](v0.1.11-release.md).
 
 ## Compatibility policy: negotiate the implemented contract
 
@@ -34,7 +36,7 @@ they are not claims that an unknown future Host has passed end-to-end tests.
 The same adapter passed its registration/removal tests built against the official
 v8.0.47 SDK (latest schema 8) via an isolated modfile, including Host 7 acceptance
 and schema-7 management output. The project's pinned SDK files were not changed.
-The final DLL with the independent schema constant passed the real CPA/TTL suites
+The pre-release DLL with the independent schema constant passed the real CPA/TTL suites
 on official v8.0.47 (57.473 seconds) and v8.0.45 (48.945 seconds), plus v8.0.47 Edge.
 
 ## Fix included in 0.1.11: host schema negotiation on CPA v8.0.47
@@ -454,7 +456,7 @@ policy hashes remained unchanged; the service loaded the replacement plugin.
 
 | Plugin release | CPA version | CPA plugin ABI | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 0.1.11 | v8.0.45 and v8.0.47 (`90c447d3a8727d115aa7552ec93ce023736ed492`); pinned SDK v8.0.45 | C ABI 1 / host schema at least 7, plugin schema 7 | release candidate; final-version validation in progress | Accepts compatible newer-host schema maxima while retaining body omission and the pinned plugin contract |
+| 0.1.11 | v8.0.45 and v8.0.47 (`90c447d3a8727d115aa7552ec93ce023736ed492`); pinned SDK v8.0.45 | C ABI 1 / host schema at least 7, plugin schema 7 | published; both platform builds/artifacts checked; official DLL CPA/TTL passed on both Hosts and Edge on v8.0.47; Linux loading untested | Accepts compatible newer-host schema maxima while retaining body omission and the pinned plugin contract |
 | 0.1.10 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Removes response verification; optional uniform Claude TTL; reads saved 0.1.9 and 0.1.8 catalogs |
 | 0.1.9 | v8.0.45 (`ad8bdd3f20bef44f0684b8a6096a216b2c76040d`) | C ABI 1 / host and plugin schema 7 | released; official Windows DLL verified; Linux CI tests/build passed | Authoritative Host model associations, explicit refresh, legacy catalog read compatibility and runtime-only empty-owner exclusion |
 | 0.1.8 | v8.0.32 (`911f49cbd49f4fe2516979754a7488a3fd14fe64`) | C ABI 1 / host and plugin schema 6 | verified on Windows amd64 | Credential-aware model catalogs via official management API snapshots |

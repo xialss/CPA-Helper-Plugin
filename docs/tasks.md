@@ -4,9 +4,9 @@
 
 - 用户授权：2026-10-29“提交并发布新版本”；范围为协议协商修复、必要版本/状态兼容、提交推送、现有双平台发布流程及正式产物验证。不修改 CPA、Helper 或真实部署，不自动合并。
 - REL011-01 完成：版本与当前文档统一为 0.1.11，补 v0.1.10 状态升级兼容；保留插件 schema 7、宿主至少 7 且不设上限的规则。
-- REL011-02 检查通过，待提交：fmt/vet/all/race、目录 13/13、v8.0.47 Edge、新版 SDK 隔离回归通过；最终版本 DLL 在官方 v8.0.47 三套 fixture 77.056 秒、v8.0.45 78.493 秒通过。暂存审查后提交。
-- REL011-03 待办：推送修复分支与 v0.1.11 附注标签，等待现有 workflow 并发布中文说明。
-- REL011-04 待办：下载双平台正式 ZIP 和 checksum，核对散列/根目录/构建源码元数据，用发布 DLL 复核两版 CPA/TTL 与界面，更新证据。
+- REL011-02 完成：fmt/vet/all/race、目录 13/13、v8.0.47 Edge、新版 SDK 隔离回归通过；最终版本 DLL 在官方 v8.0.47 三套 fixture 77.056 秒、v8.0.45 78.493 秒通过。暂存审查后提交 `a1b47066a6d3cefe78b3bedfc06d7ab5f2997fda`。
+- REL011-03 完成：修复分支与附注标签已推送；[workflow](https://github.com/xialss/CPA-Helper-Plugin/actions/runs/40805822770) 四个 job 全部成功；[正式 Release](https://github.com/xialss/CPA-Helper-Plugin/releases/tag/v0.1.11) 已发布为 Latest，中文说明已补齐并读回核对。
+- REL011-04 完成：正式 3 项资产大小/digest/checksum、ZIP 单根库和 Go/SDK/版本/源码 clean 元数据均通过；发布 DLL 在官方 v8.0.47 三套 fixture 59.499 秒、v8.0.45 60.360 秒和 v8.0.47 Edge 通过。未部署 VPS，Linux 动态加载和真实计费联调未测。
 - 记录：[v0.1.11](v0.1.11-release.md)。下文“尚未提交/发布”是修复阶段历史状态，本轮以实际发布记录为准。用户 AGENTS.md 和临时产物排除在提交之外。
 
 ## 当前修复：CPA v8.0.47 注册失败
